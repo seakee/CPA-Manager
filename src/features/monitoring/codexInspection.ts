@@ -1,0 +1,1178 @@
+import type { AxiosRequestConfig } from 'axios';
+import { authFilesApi } from '@/services/api/authFiles';
+import { apiCallApi, getApiCallErrorMessage } from '@/services/api/apiCall';
+import type { AuthFileItem, Config, CodexRateLimitInfo, CodexUsagePayload, CodexUsageWindow } from '@/types';
+import {
+  CODEX_REQUEST_HEADERS,
+  CODEX_USAGE_URL,
+  isDisabledAuthFile,
+  normalizeNumberValue,
+  parseCodexUsagePayload,
+  resolveAuthProvider,
+  resolveCodexChatgptAccountId,
+} from '@/utils/quota';
+import { normalizeAuthIndex } from '@/utils/usage';
+
+export type CodexInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
+export type CodexInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';
+export type CodexInspectionExecutionAction = Exclude<CodexInspectionAction, 'keep'>;
+export type CodexInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed';
+
+export interface CodexInspectionSettings {
+  baseUrl: string;
+  token: string;
+  targetType: string;
+  workers: number;
+  deleteWorkers: number;
+  timeout: number;
+  retries: number;
+  userAgent: string;
+  usedPercentThreshold: number;
+  sampleSize: number;
+}
+
+export interface CodexInspectionConfigurableSettings {
+  targetType: string;
+  workers: number;
+  deleteWorkers: number;
+  timeout: number;
+  retries: number;
+  userAgent: string;
+  usedPercentThreshold: number;
+  sampleSize: number;
+  autoExecuteActions: boolean;
+}
+
+export interface CodexInspectionAccount {
+  key: string;
+  fileName: string;
+  displayAccount: string;
+  authIndex: string | null;
+  accountId: string | null;
+  provider: string;
+  disabled: boolean;
+  status: string;
+  state: string;
+  raw: AuthFileItem;
+}
+
+export interface CodexInspectionResultItem extends CodexInspectionAccount {
+  action: CodexInspectionAction;
+  actionReason: string;
+  statusCode: number | null;
+  usedPercent: number | null;
+  isQuota: boolean;
+  error: string;
+}
+
+export interface CodexInspectionSummary {
+  totalFiles: number;
+  probeSetCount: number;
+  sampledCount: number;
+  disabledCount: number;
+  enabledCount: number;
+  deleteCount: number;
+  disableCount: number;
+  enableCount: number;
+  keepCount: number;
+  usedPercentThreshold: number;
+  sampled: boolean;
+  plannedActionPreview: string[];
+}
+
+export interface CodexInspectionProgressSummary {
+  totalFiles: number;
+  probeSetCount: number;
+  sampledCount: number;
+  deleteCount: number;
+  disableCount: number;
+  enableCount: number;
+  keepCount: number;
+}
+
+export interface CodexInspectionRunResult {
+  settings: CodexInspectionSettings;
+  files: AuthFileItem[];
+  results: CodexInspectionResultItem[];
+  summary: CodexInspectionSummary;
+  startedAt: number;
+  finishedAt: number;
+}
+
+export interface CodexInspectionProgressSnapshot {
+  total: number;
+  completed: number;
+  inFlight: number;
+  pending: number;
+  percent: number;
+  status: CodexInspectionProgressStatus;
+  summary: CodexInspectionProgressSummary;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface CodexInspectionExecutionOutcome {
+  action: CodexInspectionExecutionAction;
+  fileName: string;
+  displayAccount: string;
+  success: boolean;
+  error: string;
+}
+
+export interface CodexInspectionExecutionResult {
+  outcomes: CodexInspectionExecutionOutcome[];
+  refreshedFiles: AuthFileItem[];
+  refreshError: string;
+}
+
+type LogHandler = (level: CodexInspectionLogLevel, message: string) => void;
+type ProgressHandler = (progress: CodexInspectionProgressSnapshot) => void;
+
+type InspectCodexAccountsOptions = {
+  config: Config | null;
+  apiBase: string;
+  managementKey: string;
+  settings?: Partial<CodexInspectionConfigurableSettings> | null;
+  onLog?: LogHandler;
+  onProgress?: ProgressHandler;
+};
+
+type ExecuteCodexInspectionActionsOptions = {
+  settings: CodexInspectionSettings;
+  items: CodexInspectionResultItem[];
+  previousFiles: AuthFileItem[];
+  onLog?: LogHandler;
+};
+
+type CreateCodexInspectionSessionOptions = InspectCodexAccountsOptions;
+
+type CodexInspectionSessionPromiseState = {
+  promise: Promise<CodexInspectionRunResult>;
+  resolve: (value: CodexInspectionRunResult) => void;
+  reject: (reason?: unknown) => void;
+};
+
+export interface CodexInspectionSession {
+  id: string;
+  start: () => Promise<CodexInspectionRunResult>;
+  resume: () => void;
+  pause: () => void;
+  stop: () => void;
+  getProgress: () => CodexInspectionProgressSnapshot;
+}
+
+const QUOTA_BODY_PATTERNS = ['quota exhausted', 'limit reached', 'payment_required'];
+
+export class CodexInspectionStoppedError extends Error {
+  constructor(message: string = '巡检已停止') {
+    super(message);
+    this.name = 'CodexInspectionStoppedError';
+  }
+}
+
+export const CODEX_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-codex-inspection-settings-v1';
+
+export const DEFAULT_CODEX_INSPECTION_SETTINGS: CodexInspectionConfigurableSettings = {
+  targetType: 'codex',
+  workers: 4,
+  deleteWorkers: 4,
+  timeout: 15000,
+  retries: 0,
+  userAgent: 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
+  usedPercentThreshold: 100,
+  sampleSize: 0,
+  autoExecuteActions: false,
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const createDeferred = (): CodexInspectionSessionPromiseState => {
+  let resolve: ((value: CodexInspectionRunResult) => void) | null = null;
+  let reject: ((reason?: unknown) => void) | null = null;
+
+  const promise = new Promise<CodexInspectionRunResult>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return {
+    promise,
+    resolve: (value) => resolve?.(value),
+    reject: (reason) => reject?.(reason),
+  };
+};
+
+const clampPositiveInteger = (value: number | undefined, fallback: number) => {
+  if (!Number.isFinite(value) || !value || value <= 0) return fallback;
+  return Math.max(1, Math.floor(value));
+};
+
+const normalizeThreshold = (value: number | undefined) => {
+  if (!Number.isFinite(value) || value === undefined || value < 0) return NaN;
+  if (value > 0 && value <= 1) {
+    return value * 100;
+  }
+  return value;
+};
+
+const readString = (value: unknown) => {
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
+};
+
+const readBoolean = (value: unknown, fallback: boolean) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  }
+  return fallback;
+};
+
+const readAuthFileName = (file: AuthFileItem) => {
+  const name = readString(file.name);
+  if (name) return name;
+  const id = readString(file.id);
+  if (id) return id;
+  const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+  return authIndex || 'unknown-auth-file';
+};
+
+const readDisplayAccount = (file: AuthFileItem) =>
+  readString(file.account) ||
+  readString(file.email) ||
+  readString(file.label) ||
+  readString(file.name) ||
+  readString(file.id) ||
+  normalizeAuthIndex(file['auth_index'] ?? file.authIndex) ||
+  '-';
+
+const toInspectionAccount = (file: AuthFileItem): CodexInspectionAccount => ({
+  key: `${readAuthFileName(file)}::${normalizeAuthIndex(file['auth_index'] ?? file.authIndex) || '-'}`,
+  fileName: readAuthFileName(file),
+  displayAccount: readDisplayAccount(file),
+  authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
+  accountId: resolveCodexChatgptAccountId(file),
+  provider: resolveAuthProvider(file),
+  disabled: isDisabledAuthFile(file),
+  status: readString(file.status),
+  state: readString(file.state),
+  raw: file,
+});
+
+const readConfigurableSettingsFromConfig = (
+  config?: Config | null
+): Partial<CodexInspectionConfigurableSettings> => {
+  const clean = config?.clean ?? null;
+  return {
+    targetType: readString(clean?.targetType),
+    workers: normalizeNumberValue(clean?.workers) ?? undefined,
+    deleteWorkers: normalizeNumberValue(clean?.deleteWorkers) ?? undefined,
+    timeout: normalizeNumberValue(clean?.timeout) ?? undefined,
+    retries: normalizeNumberValue(clean?.retries) ?? undefined,
+    userAgent: readString(clean?.userAgent),
+    usedPercentThreshold: normalizeNumberValue(clean?.usedPercentThreshold) ?? undefined,
+    sampleSize: normalizeNumberValue(clean?.sampleSize) ?? undefined,
+    autoExecuteActions: undefined,
+  };
+};
+
+const normalizeConfigurableSettings = (
+  input?: Partial<CodexInspectionConfigurableSettings> | null
+): CodexInspectionConfigurableSettings => {
+  const merged = {
+    ...DEFAULT_CODEX_INSPECTION_SETTINGS,
+    ...(input ?? {}),
+  };
+
+  const threshold = normalizeThreshold(merged.usedPercentThreshold);
+  const retriesValue = normalizeNumberValue(merged.retries);
+  const sampleSizeValue = normalizeNumberValue(merged.sampleSize);
+
+  return {
+    targetType: readString(merged.targetType).toLowerCase() || DEFAULT_CODEX_INSPECTION_SETTINGS.targetType,
+    workers: clampPositiveInteger(normalizeNumberValue(merged.workers) ?? undefined, DEFAULT_CODEX_INSPECTION_SETTINGS.workers),
+    deleteWorkers: clampPositiveInteger(
+      normalizeNumberValue(merged.deleteWorkers) ?? undefined,
+      clampPositiveInteger(normalizeNumberValue(merged.workers) ?? undefined, DEFAULT_CODEX_INSPECTION_SETTINGS.workers)
+    ),
+    timeout: clampPositiveInteger(normalizeNumberValue(merged.timeout) ?? undefined, DEFAULT_CODEX_INSPECTION_SETTINGS.timeout),
+    retries:
+      retriesValue === null ? DEFAULT_CODEX_INSPECTION_SETTINGS.retries : Math.max(0, Math.floor(retriesValue)),
+    userAgent: readString(merged.userAgent) || DEFAULT_CODEX_INSPECTION_SETTINGS.userAgent,
+    usedPercentThreshold: Number.isFinite(threshold)
+      ? Math.max(0, Math.min(100, threshold))
+      : DEFAULT_CODEX_INSPECTION_SETTINGS.usedPercentThreshold,
+    sampleSize:
+      sampleSizeValue === null ? DEFAULT_CODEX_INSPECTION_SETTINGS.sampleSize : Math.max(0, Math.floor(sampleSizeValue)),
+    autoExecuteActions: readBoolean(
+      merged.autoExecuteActions,
+      DEFAULT_CODEX_INSPECTION_SETTINGS.autoExecuteActions
+    ),
+  };
+};
+
+export const loadCodexInspectionConfigurableSettings = (
+  config?: Config | null
+): CodexInspectionConfigurableSettings => {
+  const configSettings = readConfigurableSettingsFromConfig(config);
+
+  try {
+    if (typeof localStorage === 'undefined') {
+      return normalizeConfigurableSettings(configSettings);
+    }
+    const raw = localStorage.getItem(CODEX_INSPECTION_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return normalizeConfigurableSettings(configSettings);
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) {
+      return normalizeConfigurableSettings(configSettings);
+    }
+    return normalizeConfigurableSettings({
+      ...configSettings,
+      ...parsed,
+    });
+  } catch {
+    return normalizeConfigurableSettings(configSettings);
+  }
+};
+
+export const saveCodexInspectionConfigurableSettings = (
+  settings: Partial<CodexInspectionConfigurableSettings>
+): CodexInspectionConfigurableSettings => {
+  const normalized = normalizeConfigurableSettings(settings);
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(CODEX_INSPECTION_SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
+    }
+  } catch {
+    console.warn('保存 Codex 巡检配置失败');
+  }
+
+  return normalized;
+};
+
+export const clearCodexInspectionConfigurableSettings = () => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(CODEX_INSPECTION_SETTINGS_STORAGE_KEY);
+    }
+  } catch {
+    console.warn('清除 Codex 巡检配置失败');
+  }
+};
+
+const pickSample = <T,>(items: T[], sampleSize: number): T[] => {
+  if (sampleSize <= 0 || sampleSize >= items.length) return [...items];
+
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled.slice(0, sampleSize);
+};
+
+const withRetry = async <T,>(retries: number, task: () => Promise<T>): Promise<T> => {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+};
+
+const runConcurrently = async <T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<R>
+): Promise<R[]> => {
+  if (items.length === 0) return [];
+
+  const size = clampPositiveInteger(limit, 1);
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) {
+        return;
+      }
+      results[index] = await task(items[index], index);
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, () => worker()));
+  return results;
+};
+
+const getWindowUsedPercent = (window?: CodexUsageWindow | null) =>
+  normalizeNumberValue(window?.used_percent ?? window?.usedPercent);
+
+const getLimitWindows = (rateLimit?: CodexRateLimitInfo | null) => [
+  rateLimit?.primary_window ?? rateLimit?.primaryWindow ?? null,
+  rateLimit?.secondary_window ?? rateLimit?.secondaryWindow ?? null,
+];
+
+const deriveUsedPercent = (payload: CodexUsagePayload | null): number | null => {
+  if (!payload) return null;
+  const rateLimit = payload.rate_limit ?? payload.rateLimit ?? null;
+  const values = getLimitWindows(rateLimit)
+    .map((window) => getWindowUsedPercent(window))
+    .filter((value): value is number => value !== null);
+  if (!values.length) return null;
+  return Math.max(...values);
+};
+
+const isRateLimitReached = (rateLimit?: CodexRateLimitInfo | null) => {
+  if (!rateLimit) return false;
+  if (rateLimit.allowed === false) return true;
+  if (rateLimit.limit_reached === true || rateLimit.limitReached === true) return true;
+  return getLimitWindows(rateLimit).some((window) => {
+    const value = getWindowUsedPercent(window);
+    return value !== null && value >= 100;
+  });
+};
+
+const resolveProbeAction = (
+  account: CodexInspectionAccount,
+  statusCode: number,
+  usedPercent: number | null,
+  isQuota: boolean,
+  threshold: number
+): Pick<CodexInspectionResultItem, 'action' | 'actionReason'> => {
+  const overThreshold = usedPercent !== null && usedPercent >= threshold;
+  if (statusCode === 401) {
+    return { action: 'delete', actionReason: '接口返回 401，建议删除失效账号' };
+  }
+  if (isQuota || overThreshold) {
+    if (account.disabled) {
+      return {
+        action: 'keep',
+        actionReason: overThreshold ? '额度超阈值，但账号已禁用' : '额度已耗尽，但账号已禁用',
+      };
+    }
+    return {
+      action: 'disable',
+      actionReason: overThreshold ? '额度超阈值，建议禁用账号' : '额度已耗尽，建议禁用账号',
+    };
+  }
+  if (statusCode === 200 && account.disabled) {
+    return { action: 'enable', actionReason: '账号恢复健康，建议重新启用' };
+  }
+  return { action: 'keep', actionReason: '无需处理' };
+};
+
+const inspectSingleAccount = async (
+  account: CodexInspectionAccount,
+  settings: CodexInspectionSettings,
+  onLog?: LogHandler
+): Promise<CodexInspectionResultItem> => {
+  if (!account.authIndex) {
+    onLog?.('warning', `${account.displayAccount} 缺少 auth_index，跳过探测`);
+    return {
+      ...account,
+      action: 'keep',
+      actionReason: '缺少 auth_index，保留账号',
+      statusCode: null,
+      usedPercent: null,
+      isQuota: false,
+      error: '缺少 auth_index',
+    };
+  }
+
+  const requestConfig: AxiosRequestConfig = settings.timeout > 0 ? { timeout: settings.timeout } : {};
+  const headers = {
+    ...CODEX_REQUEST_HEADERS,
+    'User-Agent': settings.userAgent,
+    ...(account.accountId ? { 'Chatgpt-Account-Id': account.accountId } : {}),
+  };
+
+  try {
+    const result = await withRetry(settings.retries, () =>
+      apiCallApi.request(
+        {
+          authIndex: account.authIndex ?? undefined,
+          method: 'GET',
+          url: CODEX_USAGE_URL,
+          header: headers,
+        },
+        requestConfig
+      )
+    );
+
+    if (!result.hasStatusCode) {
+      onLog?.('warning', `${account.displayAccount} 探测未返回 status_code，保留账号`);
+      return {
+        ...account,
+        action: 'keep',
+        actionReason: '探测响应缺少 status_code，保留账号',
+        statusCode: null,
+        usedPercent: null,
+        isQuota: false,
+        error: '响应缺少 status_code',
+      };
+    }
+
+    const payload = parseCodexUsagePayload(result.body ?? result.bodyText);
+    const usedPercent = deriveUsedPercent(payload);
+    const bodyText = result.bodyText.toLowerCase();
+    const isQuota =
+      result.statusCode === 402 ||
+      QUOTA_BODY_PATTERNS.some((pattern) => bodyText.includes(pattern)) ||
+      isRateLimitReached(payload?.rate_limit ?? payload?.rateLimit ?? null) ||
+      (usedPercent !== null && usedPercent >= settings.usedPercentThreshold);
+    const action = resolveProbeAction(
+      account,
+      result.statusCode,
+      usedPercent,
+      isQuota,
+      settings.usedPercentThreshold
+    );
+
+    const successLevel =
+      action.action === 'delete'
+        ? 'error'
+        : action.action === 'disable'
+          ? 'warning'
+          : action.action === 'enable'
+            ? 'success'
+            : 'info';
+    const percentText = usedPercent === null ? '--' : `${usedPercent.toFixed(1)}%`;
+    onLog?.(
+      successLevel,
+      `${account.displayAccount} -> ${action.action} (HTTP ${result.statusCode} · 已用 ${percentText})`
+    );
+
+    return {
+      ...account,
+      action: action.action,
+      actionReason: action.actionReason,
+      statusCode: result.statusCode,
+      usedPercent,
+      isQuota,
+      error: '',
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error || '探测失败');
+    onLog?.('warning', `${account.displayAccount} 探测异常，保留账号：${errorMessage}`);
+    return {
+      ...account,
+      action: 'keep',
+      actionReason: '探测异常，保留账号',
+      statusCode: null,
+      usedPercent: null,
+      isQuota: false,
+      error: errorMessage,
+    };
+  }
+};
+
+const sortResults = (items: CodexInspectionResultItem[]) =>
+  [...items].sort(
+    (left, right) =>
+      left.fileName.localeCompare(right.fileName) ||
+      left.displayAccount.localeCompare(right.displayAccount) ||
+      left.key.localeCompare(right.key)
+  );
+
+const createEmptyProgressSummary = (): CodexInspectionProgressSummary => ({
+  totalFiles: 0,
+  probeSetCount: 0,
+  sampledCount: 0,
+  deleteCount: 0,
+  disableCount: 0,
+  enableCount: 0,
+  keepCount: 0,
+});
+
+const buildProgressSummary = (
+  files: AuthFileItem[],
+  probeSet: CodexInspectionAccount[],
+  sampledAccounts: CodexInspectionAccount[],
+  results: CodexInspectionResultItem[]
+): CodexInspectionProgressSummary => {
+  const deleteCount = results.filter((item) => item.action === 'delete').length;
+  const disableCount = results.filter((item) => item.action === 'disable').length;
+  const enableCount = results.filter((item) => item.action === 'enable').length;
+  const keepCount = results.length - deleteCount - disableCount - enableCount;
+
+  return {
+    totalFiles: files.length,
+    probeSetCount: probeSet.length,
+    sampledCount: sampledAccounts.length,
+    deleteCount,
+    disableCount,
+    enableCount,
+    keepCount,
+  };
+};
+
+const createProgressSnapshot = (
+  total: number,
+  completed: number,
+  inFlight: number,
+  status: CodexInspectionProgressStatus,
+  startedAt: number,
+  updatedAt: number = Date.now(),
+  summary: CodexInspectionProgressSummary = createEmptyProgressSummary()
+): CodexInspectionProgressSnapshot => {
+  const pending = Math.max(0, total - completed - inFlight);
+
+  return {
+    total,
+    completed,
+    inFlight,
+    pending,
+    percent: total <= 0 ? 0 : Math.round((Math.min(total, completed) / total) * 100),
+    status,
+    summary,
+    startedAt,
+    updatedAt,
+  };
+};
+
+const buildSummary = (
+  files: AuthFileItem[],
+  sampledAccounts: CodexInspectionAccount[],
+  results: CodexInspectionResultItem[],
+  settings: CodexInspectionSettings
+): CodexInspectionSummary => {
+  const deleteCount = results.filter((item) => item.action === 'delete').length;
+  const disableCount = results.filter((item) => item.action === 'disable').length;
+  const enableCount = results.filter((item) => item.action === 'enable').length;
+  const keepCount = results.length - deleteCount - disableCount - enableCount;
+  const preview = results
+    .filter((item) => item.action !== 'keep')
+    .slice(0, 10)
+    .map((item) => `${item.displayAccount} -> ${item.action}`);
+
+  return {
+    totalFiles: files.length,
+    probeSetCount: sampledAccounts.length,
+    sampledCount: results.length,
+    disabledCount: sampledAccounts.filter((item) => item.disabled).length,
+    enabledCount: sampledAccounts.filter((item) => !item.disabled).length,
+    deleteCount,
+    disableCount,
+    enableCount,
+    keepCount,
+    usedPercentThreshold: settings.usedPercentThreshold,
+    sampled: settings.sampleSize > 0 && settings.sampleSize < sampledAccounts.length,
+    plannedActionPreview: preview,
+  };
+};
+
+export const resolveCodexInspectionSettings = (
+  config: Config | null,
+  apiBase: string,
+  managementKey: string,
+  settingsOverride?: Partial<CodexInspectionConfigurableSettings> | null
+): CodexInspectionSettings => {
+  const clean = config?.clean ?? null;
+  const configurable = normalizeConfigurableSettings({
+    ...readConfigurableSettingsFromConfig(config),
+    ...(settingsOverride ?? {}),
+  });
+
+  return {
+    baseUrl: readString(apiBase) || readString(clean?.baseUrl),
+    token: readString(managementKey) || readString(clean?.token),
+    targetType: configurable.targetType,
+    workers: configurable.workers,
+    deleteWorkers: configurable.deleteWorkers,
+    timeout: configurable.timeout,
+    retries: configurable.retries,
+    userAgent: configurable.userAgent,
+    usedPercentThreshold: configurable.usedPercentThreshold,
+    sampleSize: configurable.sampleSize,
+  };
+};
+
+export const createCodexInspectionSession = ({
+  config,
+  apiBase,
+  managementKey,
+  settings,
+  onLog,
+  onProgress,
+}: CreateCodexInspectionSessionOptions): CodexInspectionSession => {
+  const resolvedSettings = resolveCodexInspectionSettings(config, apiBase, managementKey, settings);
+  const sessionId = `codex-inspection-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  let status: CodexInspectionProgressStatus = 'idle';
+  let startedAt = 0;
+  let finishedAt = 0;
+  let files: AuthFileItem[] = [];
+  let probeSet: CodexInspectionAccount[] = [];
+  let sampledAccounts: CodexInspectionAccount[] = [];
+  let cursor = 0;
+  let inFlight = 0;
+  let finalResult: CodexInspectionRunResult | null = null;
+  let deferred: CodexInspectionSessionPromiseState | null = null;
+  const resultMap = new Map<string, CodexInspectionResultItem>();
+
+  const emitProgress = () => {
+    const baseTime = startedAt || Date.now();
+    const summary = buildProgressSummary(files, probeSet, sampledAccounts, Array.from(resultMap.values()));
+    onProgress?.(createProgressSnapshot(sampledAccounts.length, resultMap.size, inFlight, status, baseTime, Date.now(), summary));
+  };
+
+  const buildFinalResult = (finishedTime: number): CodexInspectionRunResult => {
+    const results = sortResults(Array.from(resultMap.values()));
+    const summary = buildSummary(files, probeSet, results, resolvedSettings);
+    return {
+      settings: resolvedSettings,
+      files,
+      results,
+      summary,
+      startedAt,
+      finishedAt: finishedTime,
+    };
+  };
+
+  const settleStopped = () => {
+    if (!deferred) return;
+    const currentDeferred = deferred;
+    deferred = null;
+    currentDeferred.reject(new CodexInspectionStoppedError());
+  };
+
+  const settleCompleted = () => {
+    if (!deferred) return;
+    const currentDeferred = deferred;
+    deferred = null;
+    finishedAt = Date.now();
+    finalResult = buildFinalResult(finishedAt);
+    status = 'completed';
+    emitProgress();
+    onLog?.(
+      'success',
+      `巡检完成：删除 ${finalResult.summary.deleteCount}、禁用 ${finalResult.summary.disableCount}、启用 ${finalResult.summary.enableCount}、保留 ${finalResult.summary.keepCount}`
+    );
+    currentDeferred.resolve(finalResult);
+  };
+
+  const maybeSettle = () => {
+    if (status === 'stopped') {
+      if (inFlight === 0) {
+        settleStopped();
+      }
+      return;
+    }
+
+    if (cursor >= sampledAccounts.length && inFlight === 0) {
+      settleCompleted();
+    }
+  };
+
+  const pump = () => {
+    if (status !== 'running') {
+      maybeSettle();
+      return;
+    }
+
+    while (status === 'running' && inFlight < resolvedSettings.workers && cursor < sampledAccounts.length) {
+      const account = sampledAccounts[cursor];
+      cursor += 1;
+      inFlight += 1;
+      emitProgress();
+
+      void inspectSingleAccount(account, resolvedSettings, onLog)
+        .then((inspectionResult) => {
+          resultMap.set(inspectionResult.key, inspectionResult);
+        })
+        .catch((error) => {
+          resultMap.set(account.key, {
+            ...account,
+            action: 'keep',
+            actionReason: '探测异常，保留账号',
+            statusCode: null,
+            usedPercent: null,
+            isQuota: false,
+            error: error instanceof Error ? error.message : String(error || '探测失败'),
+          });
+        })
+        .finally(() => {
+          inFlight = Math.max(0, inFlight - 1);
+          emitProgress();
+          pump();
+        });
+    }
+
+    maybeSettle();
+  };
+
+  const ensureStarted = () => {
+    if (startedAt <= 0) {
+      startedAt = Date.now();
+    }
+    if (!deferred) {
+      deferred = createDeferred();
+    }
+    return deferred;
+  };
+
+  const initialize = async () => {
+    onLog?.('info', `加载认证文件列表，目标类型：${resolvedSettings.targetType}`);
+
+    const authFilesResponse = await authFilesApi.list();
+    files = Array.isArray(authFilesResponse.files) ? authFilesResponse.files : [];
+    const accounts = files.map(toInspectionAccount);
+    probeSet = accounts.filter((item) => item.provider === resolvedSettings.targetType);
+    sampledAccounts =
+      resolvedSettings.sampleSize > 0
+        ? pickSample(probeSet, Math.min(resolvedSettings.sampleSize, probeSet.length))
+        : probeSet;
+
+    onLog?.(
+      'info',
+      `巡检集合 ${probeSet.length} 个账号，本次探测 ${sampledAccounts.length} 个账号`
+    );
+    emitProgress();
+  };
+
+  const start = () => {
+    if (finalResult) {
+      return Promise.resolve(finalResult);
+    }
+
+    if (status === 'completed') {
+      return Promise.reject(new Error('巡检已结束，请重新开始'));
+    }
+
+    if (status === 'running') {
+      return ensureStarted().promise;
+    }
+
+    if (status === 'paused') {
+      status = 'running';
+      onLog?.('info', '继续巡检');
+      emitProgress();
+      pump();
+      return ensureStarted().promise;
+    }
+
+    if (status === 'stopped') {
+      return Promise.reject(new CodexInspectionStoppedError('巡检已停止，请重新开始'));
+    }
+
+    const currentDeferred = ensureStarted();
+    status = 'running';
+    emitProgress();
+
+    void initialize()
+      .then(() => {
+        pump();
+      })
+      .catch((error) => {
+        status = 'completed';
+        emitProgress();
+        const activeDeferred = deferred;
+        deferred = null;
+        activeDeferred?.reject(error);
+      });
+
+    return currentDeferred.promise;
+  };
+
+  const resume = () => {
+    if (status !== 'paused') return;
+    status = 'running';
+    onLog?.('info', '继续巡检');
+    emitProgress();
+    pump();
+  };
+
+  const pause = () => {
+    if (status !== 'running') return;
+    status = 'paused';
+    onLog?.(
+      'info',
+      inFlight > 0 ? `巡检已暂停，等待 ${inFlight} 个进行中的探测完成` : '巡检已暂停'
+    );
+    emitProgress();
+    maybeSettle();
+  };
+
+  const stop = () => {
+    if (status === 'completed' || status === 'stopped' || status === 'idle') return;
+    status = 'stopped';
+    onLog?.(
+      'warning',
+      inFlight > 0 ? `巡检已停止，等待 ${inFlight} 个进行中的探测完成` : '巡检已停止'
+    );
+    emitProgress();
+    maybeSettle();
+  };
+
+  return {
+    id: sessionId,
+    start,
+    resume,
+    pause,
+    stop,
+    getProgress: () =>
+      createProgressSnapshot(
+        sampledAccounts.length,
+        resultMap.size,
+        inFlight,
+        status,
+        startedAt || Date.now(),
+        Date.now(),
+        buildProgressSummary(files, probeSet, sampledAccounts, Array.from(resultMap.values()))
+      ),
+  };
+};
+
+export const inspectCodexAccounts = async ({
+  config,
+  apiBase,
+  managementKey,
+  settings,
+  onLog,
+  onProgress,
+}: InspectCodexAccountsOptions): Promise<CodexInspectionRunResult> => {
+  const session = createCodexInspectionSession({
+    config,
+    apiBase,
+    managementKey,
+    settings,
+    onLog,
+    onProgress,
+  });
+
+  return session.start();
+};
+
+const dedupeExecutionItems = (items: CodexInspectionResultItem[]) => {
+  const map = new Map<string, CodexInspectionResultItem>();
+  items.forEach((item) => {
+    if (item.action === 'keep') return;
+    if (!item.fileName) return;
+    if (!map.has(item.fileName)) {
+      map.set(item.fileName, item);
+    }
+  });
+  return Array.from(map.values()).sort((left, right) => left.fileName.localeCompare(right.fileName));
+};
+
+const executeDelete = async (item: CodexInspectionResultItem): Promise<CodexInspectionExecutionOutcome> => {
+  try {
+    const result = await authFilesApi.deleteFileByName(item.fileName);
+    const failed = result.failed[0];
+    if (failed) {
+      return {
+        action: 'delete',
+        fileName: item.fileName,
+        displayAccount: item.displayAccount,
+        success: false,
+        error: failed.error || '删除失败',
+      };
+    }
+    return {
+      action: 'delete',
+      fileName: item.fileName,
+      displayAccount: item.displayAccount,
+      success: true,
+      error: '',
+    };
+  } catch (error) {
+    return {
+      action: 'delete',
+      fileName: item.fileName,
+      displayAccount: item.displayAccount,
+      success: false,
+      error: error instanceof Error ? error.message : String(error || '删除失败'),
+    };
+  }
+};
+
+const executeStatusChange = async (
+  item: CodexInspectionResultItem,
+  disabled: boolean
+): Promise<CodexInspectionExecutionOutcome> => {
+  try {
+    await authFilesApi.setStatusWithFallback(item.fileName, disabled);
+    return {
+      action: disabled ? 'disable' : 'enable',
+      fileName: item.fileName,
+      displayAccount: item.displayAccount,
+      success: true,
+      error: '',
+    };
+  } catch (error) {
+    return {
+      action: disabled ? 'disable' : 'enable',
+      fileName: item.fileName,
+      displayAccount: item.displayAccount,
+      success: false,
+      error: error instanceof Error ? error.message : String(error || '状态更新失败'),
+    };
+  }
+};
+
+export const executeCodexInspectionActions = async ({
+  settings,
+  items,
+  previousFiles,
+  onLog,
+}: ExecuteCodexInspectionActionsOptions): Promise<CodexInspectionExecutionResult> => {
+  const dedupedItems = dedupeExecutionItems(items);
+  const deleteItems = dedupedItems.filter((item) => item.action === 'delete');
+  const disableItems = dedupedItems.filter((item) => item.action === 'disable');
+  const enableItems = dedupedItems.filter((item) => item.action === 'enable');
+  const outcomes: CodexInspectionExecutionOutcome[] = [];
+
+  if (deleteItems.length > 0) {
+    onLog?.('info', `开始删除 ${deleteItems.length} 个账号`);
+    const deleteOutcomes = await runConcurrently(deleteItems, settings.deleteWorkers, executeDelete);
+    deleteOutcomes.forEach((outcome) => {
+      onLog?.(
+        outcome.success ? 'success' : 'error',
+        `${outcome.displayAccount} 删除${outcome.success ? '成功' : `失败：${outcome.error}`}`
+      );
+    });
+    outcomes.push(...deleteOutcomes);
+  }
+
+  if (disableItems.length > 0) {
+    onLog?.('info', `开始禁用 ${disableItems.length} 个账号`);
+    const disableOutcomes = await runConcurrently(disableItems, settings.workers, (item) =>
+      executeStatusChange(item, true)
+    );
+    disableOutcomes.forEach((outcome) => {
+      onLog?.(
+        outcome.success ? 'success' : 'error',
+        `${outcome.displayAccount} 禁用${outcome.success ? '成功' : `失败：${outcome.error}`}`
+      );
+    });
+    outcomes.push(...disableOutcomes);
+  }
+
+  if (enableItems.length > 0) {
+    onLog?.('info', `开始启用 ${enableItems.length} 个账号`);
+    const enableOutcomes = await runConcurrently(enableItems, settings.workers, (item) =>
+      executeStatusChange(item, false)
+    );
+    enableOutcomes.forEach((outcome) => {
+      onLog?.(
+        outcome.success ? 'success' : 'error',
+        `${outcome.displayAccount} 启用${outcome.success ? '成功' : `失败：${outcome.error}`}`
+      );
+    });
+    outcomes.push(...enableOutcomes);
+  }
+
+  let refreshedFiles = previousFiles;
+  let refreshError = '';
+  try {
+    const response = await authFilesApi.list();
+    refreshedFiles = Array.isArray(response.files) ? response.files : previousFiles;
+  } catch (error) {
+    refreshError = error instanceof Error ? error.message : String(error || '刷新账号列表失败');
+    onLog?.('warning', `执行后刷新账号列表失败，已回退旧快照：${refreshError}`);
+  }
+
+  return {
+    outcomes,
+    refreshedFiles,
+    refreshError,
+  };
+};
+
+export const buildCodexInspectionError = (message: string) => message;
+
+export const buildExecutionFailureMessage = (outcome: CodexInspectionExecutionOutcome) =>
+  `${outcome.displayAccount}：${outcome.error || '执行失败'}`;
+
+export const isSuggestedAction = (item: CodexInspectionResultItem) => item.action !== 'keep';
+
+export const isCodexInspectionStoppedError = (error: unknown): error is CodexInspectionStoppedError =>
+  error instanceof CodexInspectionStoppedError;
+
+export const applyCodexInspectionExecutionResult = (
+  previousResult: CodexInspectionRunResult,
+  execution: CodexInspectionExecutionResult
+): CodexInspectionRunResult => {
+  const successfulOutcomes = new Map(
+    execution.outcomes.filter((item) => item.success).map((item) => [item.fileName, item] as const)
+  );
+  const refreshedAccounts = new Map(
+    execution.refreshedFiles.map((file) => {
+      const account = toInspectionAccount(file);
+      return [account.fileName, account] as const;
+    })
+  );
+
+  const nextResults = sortResults(
+    previousResult.results.map((item) => {
+      const refreshedAccount = refreshedAccounts.get(item.fileName);
+      const baseItem: CodexInspectionResultItem = refreshedAccount
+        ? {
+            ...item,
+            ...refreshedAccount,
+            raw: refreshedAccount.raw,
+          }
+        : item;
+      const outcome = successfulOutcomes.get(item.fileName);
+
+      if (!outcome) {
+        return baseItem;
+      }
+
+      return {
+        ...baseItem,
+        disabled: outcome.action === 'disable' ? true : outcome.action === 'enable' ? false : baseItem.disabled,
+        action: 'keep',
+        actionReason: '无需处理',
+        error: '',
+      };
+    })
+  );
+
+  const deleteCount = nextResults.filter((item) => item.action === 'delete').length;
+  const disableCount = nextResults.filter((item) => item.action === 'disable').length;
+  const enableCount = nextResults.filter((item) => item.action === 'enable').length;
+  const keepCount = nextResults.length - deleteCount - disableCount - enableCount;
+  const plannedActionPreview = nextResults
+    .filter((item) => item.action !== 'keep')
+    .slice(0, 10)
+    .map((item) => `${item.displayAccount} -> ${item.action}`);
+
+  return {
+    ...previousResult,
+    files: execution.refreshedFiles,
+    results: nextResults,
+    summary: {
+      ...previousResult.summary,
+      totalFiles: execution.refreshedFiles.length,
+      disabledCount: nextResults.filter((item) => item.disabled).length,
+      enabledCount: nextResults.filter((item) => !item.disabled).length,
+      deleteCount,
+      disableCount,
+      enableCount,
+      keepCount,
+      plannedActionPreview,
+    },
+    finishedAt: Date.now(),
+  };
+};
+
+export const buildSuggestedActionCountLabel = (summary: CodexInspectionSummary) =>
+  summary.deleteCount + summary.disableCount + summary.enableCount;
+
+export const getProbeFailureMessage = (result: CodexInspectionResultItem) =>
+  result.error || getApiCallErrorMessage({ statusCode: result.statusCode || 0, hasStatusCode: true, header: {}, bodyText: '', body: null });

@@ -1,0 +1,1319 @@
+.page,
+.monitorModal {
+  --monitor-bg: var(--bg-secondary);
+  --monitor-surface: var(--bg-primary);
+  --monitor-surface-elevated: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-secondary));
+  --monitor-surface-muted: var(--bg-tertiary);
+  --monitor-surface-hover: color-mix(in srgb, var(--bg-tertiary) 74%, var(--bg-primary));
+  --monitor-ink: var(--text-primary);
+  --monitor-muted: var(--text-secondary);
+  --monitor-line: var(--border-color);
+  --monitor-line-strong: var(--border-primary);
+  --monitor-accent: #3b82f6;
+  --monitor-accent-strong: #2563eb;
+  --monitor-accent-soft: rgba(59, 130, 246, 0.12);
+  --monitor-cyan: #06b6d4;
+  --monitor-green: var(--success-color);
+  --monitor-amber: #f59e0b;
+  --monitor-red: var(--error-color);
+  color: var(--monitor-ink);
+}
+
+.page {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.loadingOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--monitor-bg) 58%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.loadingOverlayContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: 20px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.masthead,
+.panel,
+.summaryCard {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 24px;
+  background: var(--monitor-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.masthead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  padding: 28px;
+}
+
+.mastheadGlow {
+  display: none;
+}
+
+.mastheadCopy {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--monitor-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(34px, 3.5vw, 50px);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 760px;
+  color: var(--monitor-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.mastheadControls {
+  display: grid;
+  gap: 14px;
+  min-width: 420px;
+  justify-items: end;
+}
+
+.segmentedControl {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface-elevated);
+}
+
+.segmentButton,
+.refreshButton,
+.quickLinkButton,
+.clearButton,
+.inlineActionButton,
+.quotaRefreshButton,
+.accountButton,
+.quickLink {
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.segmentButton {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.segmentButton:hover {
+  transform: translateY(-1px);
+  color: var(--monitor-ink);
+}
+
+.segmentButtonActive {
+  background: linear-gradient(135deg, var(--monitor-accent), var(--monitor-cyan));
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.24);
+}
+
+.refreshCluster {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 20px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface-elevated);
+}
+
+.refreshControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.syncPill,
+.metaPill,
+.quickLink,
+.quickLinkButton,
+.clearButton,
+.inlineActionButton,
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface-elevated);
+}
+
+.syncPill,
+.metaPill,
+.quickLink,
+.quickLinkButton {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.syncPill {
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.metaPill,
+.quickLink,
+.quickLinkButton {
+  gap: 6px;
+}
+
+.quickLink,
+.quickLinkButton {
+  text-decoration: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.quickLink:hover,
+.quickLinkButton:hover,
+.clearButton:hover,
+.inlineActionButton:hover,
+.quotaRefreshButton:hover,
+.refreshButton:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+  color: var(--monitor-ink);
+}
+
+.clearButton,
+.inlineActionButton {
+  gap: 8px;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.autoRefreshField {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 10px 0 14px;
+  border-radius: 16px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface);
+}
+
+.autoRefreshLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.autoRefreshSelect {
+  width: 116px;
+  flex: 0 0 auto;
+}
+
+.autoRefreshSelectTrigger {
+  min-width: 92px;
+  height: 36px !important;
+  padding: 0 2px 0 8px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--monitor-ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.autoRefreshSelectTrigger:hover,
+.autoRefreshSelectTrigger:focus,
+.autoRefreshSelectTrigger[aria-expanded='true'] {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.refreshButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 112px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 16px;
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.refreshButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+  transform: none;
+}
+
+.refreshIcon,
+.refreshIconSpinning {
+  display: block;
+  flex-shrink: 0;
+  transform-origin: center;
+}
+
+.refreshIconSpinning {
+  animation: monitor-spin 0.9s linear infinite;
+}
+
+.refreshButtonLabel {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.panel {
+  min-width: 0;
+  padding: 22px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.panelSubtitle {
+  margin: 6px 0 0;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.panelExtra {
+  flex-shrink: 0;
+}
+
+.toolbarPanel,
+.pricingPanel,
+.accountPanel,
+.realtimePanel {
+  background: var(--monitor-surface);
+}
+
+.filterGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.toolbarFoot {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr) minmax(240px, auto);
+  gap: 14px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.searchInput {
+  min-height: 46px;
+  padding-right: 40px;
+  border-radius: 16px;
+}
+
+.toolbarMeta,
+.quickLinkRow,
+.inlineMetrics,
+.savedPricesActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbarMeta,
+.quickLinkRow {
+  align-items: center;
+}
+
+.quickLinkRow {
+  justify-content: flex-end;
+}
+
+.inlineMetrics span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.errorBox,
+.callout {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--monitor-line);
+}
+
+.errorBox {
+  margin-top: 14px;
+  border-color: color-mix(in srgb, var(--monitor-red) 28%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface));
+  color: var(--monitor-red);
+}
+
+.callout {
+  margin-top: 14px;
+  border-color: color-mix(in srgb, var(--monitor-accent) 24%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.summaryCard {
+  display: grid;
+  gap: 8px;
+  min-height: 138px;
+  padding: 18px;
+  background: var(--monitor-surface-elevated);
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.summaryCard:hover {
+  transform: translateY(-1px);
+}
+
+.summaryCard:hover {
+  border-color: var(--monitor-line-strong);
+  box-shadow: var(--shadow-lg);
+}
+
+.summaryLabel,
+.savedPricesHeader,
+.priceField label {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.summaryValue {
+  font-size: clamp(26px, 2.4vw, 38px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.summaryMeta {
+  margin-top: auto;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.statusBadge {
+  gap: 6px;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tonegood {
+  color: var(--monitor-green);
+}
+
+.tonewarn {
+  color: var(--monitor-amber);
+}
+
+.tonebad {
+  color: var(--monitor-red);
+}
+
+.statusBadge.tonegood {
+  border-color: color-mix(in srgb, var(--monitor-green) 26%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-green) 10%, var(--monitor-surface));
+}
+
+.statusBadge.tonewarn {
+  border-color: color-mix(in srgb, var(--monitor-amber) 24%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-amber) 10%, var(--monitor-surface));
+}
+
+.statusBadge.tonebad {
+  border-color: color-mix(in srgb, var(--monitor-red) 26%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface));
+}
+
+.goodText {
+  color: var(--monitor-green);
+}
+
+.warnText {
+  color: var(--monitor-amber);
+}
+
+.badText {
+  color: var(--monitor-red);
+}
+
+.patternBars {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 6px;
+  gap: 4px;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--monitor-line);
+  background: var(--monitor-surface-muted);
+}
+
+.patternBarsPlain {
+  grid-auto-columns: 4px;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.patternBar {
+  width: 6px;
+  height: 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-muted) 24%, transparent);
+}
+
+.patternBarPlain {
+  width: 4px;
+  height: 24px;
+}
+
+.patternSuccess {
+  background: var(--monitor-green);
+}
+
+.patternFailed {
+  background: var(--monitor-red);
+}
+
+.priceEditor {
+  margin-top: 14px;
+  display: grid;
+  gap: 14px;
+}
+
+.priceGrid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+.priceField {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.priceField :global(.form-group) {
+  margin-bottom: 0;
+}
+
+.priceField :global(.input) {
+  min-height: 44px;
+}
+
+.priceField input,
+.priceField button {
+  min-height: 44px;
+}
+
+.priceFieldModel {
+  grid-column: span 5;
+}
+
+.priceFieldPrompt {
+  grid-column: span 7;
+}
+
+.priceFieldCompletion,
+.priceFieldCache {
+  grid-column: span 6;
+}
+
+.priceActionsBar {
+  margin-top: 2px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.savedPricesList {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.savedPricesHeader {
+  color: var(--monitor-ink);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.savedPricesTableWrap {
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--monitor-line-strong) 30%, var(--monitor-line));
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--monitor-surface-elevated) 90%, white 10%),
+      var(--monitor-surface)
+    );
+}
+
+.savedPricesTable {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.savedPricesTable thead th {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 90%, transparent);
+  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-muted));
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.savedPricesTable tbody td {
+  padding: 13px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+  color: var(--monitor-ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--monitor-surface) 88%, white 12%);
+  transition: background 0.18s ease;
+}
+
+.savedPricesTable tbody tr:first-child td {
+  border-top: 0;
+}
+
+.savedPricesTable tbody tr:nth-child(odd) td {
+  background: color-mix(in srgb, var(--monitor-accent) 4%, var(--monitor-surface-elevated));
+}
+
+.savedPricesTable tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--monitor-surface) 92%, var(--monitor-surface-elevated));
+}
+
+.savedPricesTable tbody tr:hover td {
+  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-hover));
+}
+
+.savedPricesTable th:last-child,
+.savedPricesTable td:last-child {
+  text-align: left;
+}
+
+.savedPricesModelCell {
+  min-width: 200px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.savedPricesActionsCell {
+  min-width: 120px;
+}
+
+.savedPricesActions {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: separate;
+  border-spacing: 0 10px;
+}
+
+.realtimeTable {
+  min-width: 1210px;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0 10px 4px;
+  background: transparent;
+  text-align: left;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sortableHeaderButton {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.sortableHeaderButton:hover {
+  transform: none;
+  color: var(--monitor-ink);
+}
+
+.sortableHeaderButton:focus,
+.sortableHeaderButton:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.sortableHeaderButtonActive {
+  color: var(--monitor-ink);
+}
+
+.sortIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  color: var(--monitor-accent-strong);
+}
+
+.sortIndicator svg {
+  display: block;
+}
+
+.table tbody td {
+  padding: 14px 10px;
+  vertical-align: middle;
+  white-space: nowrap;
+  border-top: 1px solid var(--monitor-line);
+  border-bottom: 1px solid var(--monitor-line);
+  background: var(--monitor-surface-elevated);
+}
+
+.table tbody td:first-child {
+  border-left: 1px solid var(--monitor-line);
+  border-radius: 18px 0 0 18px;
+}
+
+.table tbody td:last-child {
+  border-right: 1px solid var(--monitor-line);
+}
+
+//.table tbody tr:hover td {
+//  background: var(--monitor-surface-hover);
+//}
+
+.innerTable {
+  min-width: 940px;
+}
+
+.primaryCell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.primaryCell small,
+.statusCell small {
+  color: var(--monitor-muted);
+  font-size: 11px;
+}
+
+.monoCell {
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.statusCell {
+  display: grid;
+  gap: 6px;
+  min-width: 88px;
+}
+
+.recentStatusCell {
+  display: flex;
+  align-items: center;
+  min-width: 70px;
+}
+
+.realtimeTable .statusBadge {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
+.realtimeTable .statusBadge::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.accountButton {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: start;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+  white-space: normal;
+}
+
+.accountButton:hover {
+  transform: none;
+  color: var(--monitor-accent-strong);
+}
+
+.accountButton:focus,
+.accountButton:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.accountButton:focus-visible {
+  color: var(--monitor-accent-strong);
+}
+
+.accountButtonLabel {
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.accountButton small {
+  grid-column: 2;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.expandedAccountButton {
+  align-items: start;
+}
+
+.focusedRow td {
+  border-color: var(--monitor-line);
+  background: var(--monitor-surface-elevated);
+  box-shadow: none;
+}
+
+.expandedAccountCardRow td {
+  padding: 4px 0 10px;
+  border: 0;
+  background: transparent;
+  white-space: normal;
+}
+
+.expandedAccountCardRow td:first-child,
+.expandedAccountCardRow td:last-child {
+  border-radius: 0;
+}
+
+//.expandedAccountCardRow:hover td {
+//  background: transparent;
+//}
+
+.expandedAccountCard {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  border-radius: 22px;
+  border: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--monitor-surface-elevated) 94%, white 6%),
+      var(--monitor-surface-elevated)
+    );
+}
+
+.expandedAccountCardFocused {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--monitor-surface-elevated) 94%, white 6%),
+      var(--monitor-surface-elevated)
+    );
+}
+
+.expandedAccountSummary {
+  display: grid;
+  grid-template-columns: minmax(280px, 2.6fr) repeat(8, minmax(84px, 1fr)) minmax(168px, 1.4fr) auto;
+  gap: 14px 12px;
+  align-items: start;
+}
+
+.expandedAccountPrimary,
+.expandedAccountBody {
+  min-width: 0;
+}
+
+.expandedAccountMetric {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.expandedAccountMetric span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.expandedAccountMetric strong {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.expandedAccountAction {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.expandPanel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.quotaRefreshButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 999px;
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quotaRefreshButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+  transform: none;
+}
+
+.quotaSection {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.quotaSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quotaSectionTitleGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.quotaSectionTitleGroup strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.quotaSectionTitleGroup span,
+.quotaEntryMain small,
+.quotaWindowRow small {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.quotaEntryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.quotaCompactCard {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 0;
+  background: color-mix(in srgb, var(--monitor-accent) 6%, var(--monitor-surface-elevated));
+}
+
+.quotaCompactHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quotaEntryCard {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 0;
+  background: var(--monitor-surface-elevated);
+}
+
+.quotaEntryHeader,
+.quotaEntryMain,
+.quotaWindowList,
+.quotaWindowRow {
+  display: grid;
+  gap: 8px;
+}
+
+.quotaEntryMain strong,
+.quotaWindowHeader strong {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.quotaWindowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quotaWindowHeader span {
+  color: var(--monitor-ink);
+  font-size: 12px;
+}
+
+.quotaProgressTrack {
+  position: relative;
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-line) 68%, transparent);
+}
+
+.quotaProgressBar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--monitor-accent), var(--monitor-cyan));
+}
+
+.quotaStateMessage {
+  display: grid;
+  min-height: 44px;
+  place-items: center start;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 82%, var(--monitor-surface));
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.realtimeTable .primaryCell small {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.logRowFailed td {
+  border-top-color: color-mix(in srgb, var(--monitor-red) 28%, var(--monitor-line));
+  border-bottom-color: color-mix(in srgb, var(--monitor-red) 28%, var(--monitor-line));
+}
+
+.logRowFailed td:first-child,
+.logRowFailed td:last-child {
+  border-color: color-mix(in srgb, var(--monitor-red) 28%, var(--monitor-line));
+}
+
+//.logRowFailed:hover td {
+//  background: color-mix(in srgb, var(--monitor-red) 5%, var(--monitor-surface-hover));
+//}
+
+.emptyBlock,
+.emptyTable,
+.emptyBlockSmall {
+  display: grid;
+  place-items: center;
+  color: var(--monitor-muted);
+  text-align: center;
+  font-size: 14px;
+}
+
+.emptyBlock,
+.emptyTable {
+  min-height: 120px;
+}
+
+.emptyBlockSmall {
+  min-height: 80px;
+}
+
+@keyframes monitor-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1440px) {
+  .summaryGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1240px) {
+  .masthead {
+    grid-template-columns: 1fr;
+  }
+
+  .mastheadControls {
+    min-width: 0;
+    justify-items: start;
+  }
+
+  .toolbarFoot {
+    grid-template-columns: 1fr;
+  }
+
+  .refreshCluster,
+  .quickLinkRow {
+    justify-content: flex-start;
+  }
+
+  .refreshCluster,
+  .refreshControls {
+    flex-wrap: wrap;
+  }
+
+  .filterGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .filterGrid,
+  .summaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .priceGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .priceFieldModel,
+  .priceFieldPrompt,
+  .priceFieldCompletion,
+  .priceFieldCache {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .masthead,
+  .panel,
+  .summaryCard {
+    border-radius: 20px;
+  }
+
+  .masthead,
+  .panel {
+    padding: 18px;
+  }
+
+  .title {
+    font-size: 34px;
+  }
+
+  .segmentedControl,
+  .refreshCluster,
+  .refreshControls {
+    width: 100%;
+  }
+
+  .autoRefreshField {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .autoRefreshSelect {
+    width: 124px;
+  }
+
+  .filterGrid,
+  .summaryGrid,
+  .priceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .priceActionsBar {
+    justify-content: stretch;
+  }
+
+  .priceActionsBar :global(.btn) {
+    flex: 1 1 0;
+  }
+
+  .table {
+    min-width: 920px;
+  }
+
+  .realtimeTable {
+    min-width: 1180px;
+  }
+}
