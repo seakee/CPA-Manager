@@ -1,6 +1,8 @@
 @use '../styles/variables' as *;
 @use '../styles/mixins' as *;
 
+$openai-toolbar-control-height: 36px;
+
 .container {
   width: 100%;
 }
@@ -52,14 +54,363 @@
   }
 }
 
-.providerList {
+.openaiProviderList {
   display: grid;
   gap: $spacing-md;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
 
+  @media (min-width: 1400px) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
   @include mobile {
     grid-template-columns: 1fr;
   }
+}
+
+.openaiProviderCard {
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  padding: $spacing-md;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: $spacing-sm;
+  min-height: 0;
+}
+
+.openaiProviderMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.openaiProviderActions {
+  display: flex;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.openaiProviderTitle {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+// 排序控件
+.sortControls {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  height: $openai-toolbar-control-height;
+}
+
+.sortSelect {
+  flex: 0 0 148px;
+  width: 148px;
+
+  > button {
+    height: $openai-toolbar-control-height;
+    padding: 0 12px;
+    border-color: var(--border-primary);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    box-shadow: none;
+    font-size: 13px;
+  }
+}
+
+// 排序方向按钮
+.sortDirectionButton:global(.btn.btn-secondary) {
+  flex: 0 0 74px;
+  min-width: 74px;
+  height: $openai-toolbar-control-height;
+  padding: 0 10px;
+  border-color: var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  gap: 6px;
+
+  &:hover {
+    border-color: var(--primary-color);
+    background: var(--bg-tertiary);
+  }
+
+  > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+}
+
+.sortDirectionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  color: var(--primary-color);
+  flex-shrink: 0;
+}
+
+// 卡片头部操作区
+.cardHeaderActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
+  min-height: $openai-toolbar-control-height;
+
+  :global(.btn) {
+    white-space: nowrap;
+  }
+}
+
+.openaiToolbarAnchorHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.openaiFloatingToolbar {
+  position: fixed;
+  z-index: 20;
+  background: var(--bg-primary);
+  box-shadow: none;
+  overflow: visible;
+  padding: 0;
+}
+
+.openaiFloatingToolbar :global(.card-header) {
+  margin-bottom: 0;
+  padding: $spacing-sm $spacing-lg;
+  border-radius: 0;
+}
+
+// 模型多选下拉框
+.modelMultiSelectWrapper {
+  position: relative;
+}
+
+.modelFilterControl {
+  display: flex;
+  align-items: center;
+  width: 164px;
+  height: $openai-toolbar-control-height;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+  transition:
+    background-color $transition-fast,
+    border-color $transition-fast,
+    box-shadow $transition-fast;
+
+  &:hover {
+    border-color: var(--primary-color);
+    background: var(--bg-tertiary);
+  }
+}
+
+.modelFilterControlActive {
+  border-color: color-mix(in srgb, var(--primary-color) 46%, var(--border-primary));
+  background: color-mix(in srgb, var(--primary-color) 7%, var(--bg-secondary));
+}
+
+.modelFilterControlDisabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+
+  &:hover {
+    border-color: var(--border-primary);
+    background: var(--bg-secondary);
+  }
+}
+
+.modelFilterTrigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+
+  &:disabled {
+    cursor: not-allowed;
+  }
+}
+
+.modelFilterIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.modelFilterText {
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelFilterCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: $radius-full;
+  background: var(--primary-color);
+  color: var(--primary-contrast, #fff);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.modelFilterChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.modelFilterInlineClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border-primary);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color $transition-fast,
+    color $transition-fast;
+
+  &:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    color: var(--text-tertiary);
+  }
+}
+
+.modelDropdownList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 320px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: 300px;
+  overflow: hidden;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: $radius-md;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+}
+
+.modelDropdownListAbove {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.modelDropdownHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-xs;
+  padding: 6px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+}
+
+.modelDropdownSelectAll:global(.btn.btn-ghost),
+.modelDropdownClear:global(.btn.btn-ghost) {
+  height: 28px;
+  padding: 0 8px;
+  color: var(--primary-color);
+  font-size: 12px;
+
+  &:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.openaiAddButton:global(.btn.btn-primary) {
+  height: $openai-toolbar-control-height;
+  padding: 0 12px;
+}
+
+.modelDropdownItems {
+  overflow-y: auto;
+  padding: 4px;
+  min-height: 0;
+}
+
+.modelDropdownItem {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.modelDropdownItemLabel {
+  min-width: 0;
+  flex: 1;
+
+  span {
+    display: block;
+    font-size: 13px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.modelDropdownEmpty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
 }
 
 // 成功失败次数统计样式
@@ -173,6 +524,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
   background: var(--bg-quinary, #f8f9fa);
   color: var(--text-secondary);
   border: 1px solid var(--border-secondary);
@@ -190,11 +542,13 @@
 .modelName {
   font-weight: 600;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .modelAlias {
   color: var(--text-tertiary);
   font-style: italic;
+  overflow-wrap: anywhere;
 
   &::before {
     content: '→ ';
