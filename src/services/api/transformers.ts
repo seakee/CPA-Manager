@@ -27,6 +27,25 @@ const normalizeBoolean = (value: unknown): boolean | undefined => {
   return Boolean(value);
 };
 
+const normalizeString = (value: unknown): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const normalizeNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+};
+
 const normalizeModelAliases = (models: unknown): ModelAlias[] => {
   if (!Array.isArray(models)) return [];
   return models
@@ -395,6 +414,29 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
       antigravityCredits: normalizeBoolean(
         quota['antigravity-credits'] ?? quota.antigravityCredits
       )
+    };
+  }
+
+  const clean = raw.clean;
+  if (isRecord(clean)) {
+    const threshold = normalizeNumber(
+      clean['used_percent_threshold'] ??
+        clean.usedPercentThreshold ??
+        clean['used-percent-threshold']
+    );
+    config.clean = {
+      baseUrl: normalizeString(clean['base_url'] ?? clean.baseUrl ?? clean['base-url']),
+      token: normalizeString(clean.token),
+      targetType: normalizeString(clean['target_type'] ?? clean.targetType ?? clean['target-type']),
+      workers: normalizeNumber(clean.workers),
+      deleteWorkers: normalizeNumber(
+        clean['delete_workers'] ?? clean.deleteWorkers ?? clean['delete-workers']
+      ),
+      timeout: normalizeNumber(clean.timeout),
+      retries: normalizeNumber(clean.retries),
+      userAgent: normalizeString(clean['user_agent'] ?? clean.userAgent ?? clean['user-agent']),
+      usedPercentThreshold: threshold,
+      sampleSize: normalizeNumber(clean['sample_size'] ?? clean.sampleSize ?? clean['sample-size']),
     };
   }
 
