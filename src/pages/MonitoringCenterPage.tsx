@@ -788,6 +788,7 @@ function ExpandedAccountCard({
   hasPrices,
   locale,
   t,
+  summaryMetrics,
   isFocused,
   quotaState,
   onToggle,
@@ -798,27 +799,21 @@ function ExpandedAccountCard({
   hasPrices: boolean;
   locale: string;
   t: TFunction;
+  summaryMetrics: AccountSummaryMetric[];
   isFocused: boolean;
   quotaState?: AccountQuotaState;
   onToggle: () => void;
   onFocus: () => void;
   onRefreshQuota: () => void;
 }) {
-  const summaryMetrics = buildAccountSummaryMetrics(row, hasPrices, locale, t);
-
   return (
-    <div
-      className={[styles.expandedAccountCard, isFocused ? styles.expandedAccountCardFocused : '']
-        .filter(Boolean)
-        .join(' ')}
-    >
+    <div className={styles.expandedAccountCard}>
       <div className={styles.expandedAccountSummary}>
         <div className={styles.expandedAccountPrimary}>
           <AccountSummaryPrimary row={row} expanded onToggle={onToggle} />
         </div>
         {summaryMetrics.map((metric) => (
-          <div key={metric.key} className={styles.expandedAccountMetric}>
-            <span>{metric.label}</span>
+          <div key={metric.key} className={styles.expandedAccountMetricValue}>
             <strong className={metric.valueClassName}>{metric.value}</strong>
           </div>
         ))}
@@ -1120,22 +1115,22 @@ export function MonitoringCenterPage() {
     {
       label: t('monitoring.total_tokens'),
       value: formatCompactNumber(scopedSummary.totalTokens),
-      meta: `${formatCompactNumber(scopedSummary.reasoningTokens)} ${t('monitoring.reasoning_tokens')}`,
+      meta: `${t('monitoring.reasoning_tokens')} ${formatCompactNumber(scopedSummary.reasoningTokens)}`,
     },
     {
       label: t('monitoring.input_tokens'),
       value: formatCompactNumber(scopedSummary.inputTokens),
-      meta: `${formatPercent(scopedSummary.totalTokens > 0 ? scopedSummary.inputTokens / scopedSummary.totalTokens : 0)} ${t('monitoring.of_token_mix')}`,
+      meta: `${t('monitoring.of_token_mix')} ${formatPercent(scopedSummary.totalTokens > 0 ? scopedSummary.inputTokens / scopedSummary.totalTokens : 0)}`,
     },
     {
       label: t('monitoring.output_tokens'),
       value: formatCompactNumber(scopedSummary.outputTokens),
-      meta: `${formatPercent(scopedSummary.totalTokens > 0 ? scopedSummary.outputTokens / scopedSummary.totalTokens : 0)} ${t('monitoring.of_token_mix')}`,
+      meta: `${t('monitoring.of_token_mix')} ${formatPercent(scopedSummary.totalTokens > 0 ? scopedSummary.outputTokens / scopedSummary.totalTokens : 0)}`,
     },
     {
       label: t('monitoring.cached_tokens'),
       value: formatCompactNumber(scopedSummary.cachedTokens),
-      meta: `${formatPercent(scopedSummary.inputTokens > 0 ? scopedSummary.cachedTokens / scopedSummary.inputTokens : 0)} ${t('monitoring.of_input_tokens')}`,
+      meta: `${t('monitoring.of_input_tokens')} ${formatPercent(scopedSummary.inputTokens > 0 ? scopedSummary.cachedTokens / scopedSummary.inputTokens : 0)}`,
     },
     {
       label: t('monitoring.estimated_cost'),
@@ -1545,7 +1540,12 @@ export function MonitoringCenterPage() {
         className={styles.accountPanel}
       >
         <div className={styles.tableWrapper}>
-          <table className={styles.table}>
+          <table className={`${styles.table} ${styles.accountOverviewTable}`}>
+            <colgroup>
+              {accountOverviewColumns.map((column) => (
+                <col key={column.key} />
+              ))}
+            </colgroup>
             <thead>
               <tr>
                 {accountOverviewColumns.map((column) => {
@@ -1594,12 +1594,13 @@ export function MonitoringCenterPage() {
                 if (isExpanded) {
                   return (
                     <tr key={row.id} className={styles.expandedAccountCardRow}>
-                      <td colSpan={11}>
+                      <td colSpan={accountOverviewColumns.length}>
                         <ExpandedAccountCard
                           row={row}
                           hasPrices={hasPrices}
                           locale={i18n.language}
                           t={t}
+                          summaryMetrics={summaryMetrics}
                           isFocused={isFocused}
                           quotaState={accountQuotaStates[row.account]}
                           onToggle={() => toggleAccountExpanded(row.id, row.account)}
@@ -1639,7 +1640,7 @@ export function MonitoringCenterPage() {
               })}
               {sortedAccountRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={accountOverviewColumns.length}>
                     <div className={styles.emptyTable}>
                       {deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
                     </div>

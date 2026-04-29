@@ -744,6 +744,79 @@
   border-spacing: 0 10px;
 }
 
+.accountOverviewTable {
+  --account-col-account: 18%;
+  --account-col-total-calls: 6%;
+  --account-col-success-calls: 7%;
+  --account-col-failure-calls: 7%;
+  --account-col-total-tokens: 8%;
+  --account-col-input-tokens: 9%;
+  --account-col-output-tokens: 9%;
+  --account-col-cached-tokens: 9%;
+  --account-col-estimated-cost: 9%;
+  --account-col-latest-request: 11%;
+  --account-col-action: 7%;
+  --account-overview-columns:
+    var(--account-col-account)
+    var(--account-col-total-calls)
+    var(--account-col-success-calls)
+    var(--account-col-failure-calls)
+    var(--account-col-total-tokens)
+    var(--account-col-input-tokens)
+    var(--account-col-output-tokens)
+    var(--account-col-cached-tokens)
+    var(--account-col-estimated-cost)
+    var(--account-col-latest-request)
+    var(--account-col-action);
+
+  min-width: 1280px;
+  table-layout: fixed;
+}
+
+.accountOverviewTable col:nth-child(1) {
+  width: var(--account-col-account);
+}
+
+.accountOverviewTable col:nth-child(2) {
+  width: var(--account-col-total-calls);
+}
+
+.accountOverviewTable col:nth-child(3) {
+  width: var(--account-col-success-calls);
+}
+
+.accountOverviewTable col:nth-child(4) {
+  width: var(--account-col-failure-calls);
+}
+
+.accountOverviewTable col:nth-child(5) {
+  width: var(--account-col-total-tokens);
+}
+
+.accountOverviewTable col:nth-child(6) {
+  width: var(--account-col-input-tokens);
+}
+
+.accountOverviewTable col:nth-child(7) {
+  width: var(--account-col-output-tokens);
+}
+
+.accountOverviewTable col:nth-child(8) {
+  width: var(--account-col-cached-tokens);
+}
+
+.accountOverviewTable col:nth-child(9) {
+  width: var(--account-col-estimated-cost);
+}
+
+.accountOverviewTable col:nth-child(10) {
+  width: var(--account-col-latest-request);
+}
+
+.accountOverviewTable col:nth-child(11) {
+  width: var(--account-col-action);
+}
+
 .realtimeTable {
   min-width: 1210px;
 }
@@ -967,20 +1040,12 @@
     );
 }
 
-.expandedAccountCardFocused {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--monitor-surface-elevated) 94%, white 6%),
-      var(--monitor-surface-elevated)
-    );
-}
-
 .expandedAccountSummary {
   display: grid;
-  grid-template-columns: minmax(280px, 2.6fr) repeat(8, minmax(84px, 1fr)) minmax(168px, 1.4fr) auto;
-  gap: 14px 12px;
-  align-items: start;
+  grid-template-columns: var(--account-overview-columns);
+  gap: 0;
+  align-items: center;
+  min-width: 0;
 }
 
 .expandedAccountPrimary,
@@ -988,30 +1053,31 @@
   min-width: 0;
 }
 
-.expandedAccountMetric {
-  display: grid;
-  gap: 6px;
+.expandedAccountPrimary,
+.expandedAccountMetricValue {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 14px 10px;
   min-width: 0;
 }
 
-.expandedAccountMetric span {
-  color: var(--monitor-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  line-height: 1.2;
-  text-transform: uppercase;
+.expandedAccountPrimary {
+  align-items: flex-start;
 }
 
-.expandedAccountMetric strong {
+.expandedAccountMetricValue strong {
   font-size: 13px;
   line-height: 1.4;
 }
 
 .expandedAccountAction {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-end;
+  box-sizing: border-box;
+  padding: 14px 10px;
+  min-width: 0;
 }
 
 .expandPanel {
@@ -1311,6 +1377,10 @@
 
   .table {
     min-width: 920px;
+  }
+
+  .accountOverviewTable {
+    min-width: 1280px;
   }
 
   .realtimeTable {
