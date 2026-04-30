@@ -453,7 +453,40 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1180px;
+  min-width: 1060px;
+  table-layout: fixed;
+}
+
+.accountColumn {
+  width: 22%;
+}
+
+.stateColumn {
+  width: 8%;
+}
+
+.httpColumn {
+  width: 8%;
+}
+
+.usageColumn {
+  width: 9%;
+}
+
+.actionColumn {
+  width: 9%;
+}
+
+.reasonColumn {
+  width: 25%;
+}
+
+.errorColumn {
+  width: 11%;
+}
+
+.operationColumn {
+  width: 8%;
 }
 
 .table th,
@@ -491,6 +524,11 @@
 
 .primaryCell span {
   font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.primaryCell small {
+  overflow-wrap: anywhere;
 }
 
 .monoCell {

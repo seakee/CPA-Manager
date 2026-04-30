@@ -824,10 +824,19 @@ export function CodexInspectionPage() {
           <>
             <div className={styles.tableWrap}>
               <table className={styles.table}>
+                <colgroup>
+                  <col className={styles.accountColumn} />
+                  <col className={styles.stateColumn} />
+                  <col className={styles.httpColumn} />
+                  <col className={styles.usageColumn} />
+                  <col className={styles.actionColumn} />
+                  <col className={styles.reasonColumn} />
+                  <col className={styles.errorColumn} />
+                  <col className={styles.operationColumn} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>{t('monitoring.account_label')}</th>
-                    <th>{t('monitoring.codex_inspection_file_name')}</th>
                     <th>{t('monitoring.codex_inspection_current_state')}</th>
                     <th>{t('monitoring.codex_inspection_http_status')}</th>
                     <th>{t('monitoring.codex_inspection_used_percent')}</th>
@@ -847,7 +856,6 @@ export function CodexInspectionPage() {
                           <small>{item.authIndex || '-'}</small>
                         </div>
                       </td>
-                      <td className={styles.monoCell}>{item.fileName}</td>
                       <td>{formatCurrentStateLabel(item, t)}</td>
                       <td>{item.statusCode === null ? '--' : item.statusCode}</td>
                       <td>{formatPercent(item.usedPercent)}</td>
@@ -872,7 +880,7 @@ export function CodexInspectionPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={8}>
                         <div className={styles.emptyBlockSmall}>{t('monitoring.codex_inspection_no_pending_actions')}</div>
                       </td>
                     </tr>
