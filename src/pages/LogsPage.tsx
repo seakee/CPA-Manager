@@ -37,7 +37,6 @@ import {
 import { parseLogLine } from './hooks/logParsing';
 import { useLogFilters } from './hooks/useLogFilters';
 import { isNearBottom, useLogScroller } from './hooks/useLogScroller';
-import { isTraceableRequestPath, useTraceResolver } from './hooks/useTraceResolver';
 import styles from './LogsPage.module.scss';
 
 interface ErrorLogItem {
@@ -68,9 +67,6 @@ export function LogsPage() {
   const { t } = useTranslation();
   const { showNotification, showConfirmation } = useNotificationStore();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const apiBase = useAuthStore((state) => state.apiBase);
-  const managementKey = useAuthStore((state) => state.managementKey);
-  const traceScopeKey = `${apiBase}::${managementKey}`;
   const config = useConfigStore((state) => state.config);
   const requestLogEnabled = config?.requestLog ?? false;
 
@@ -95,13 +91,6 @@ export function LogsPage() {
   const [errorLogsError, setErrorLogsError] = useState('');
   const [requestLogId, setRequestLogId] = useState<string | null>(null);
   const [requestLogDownloading, setRequestLogDownloading] = useState(false);
-
-  const trace = useTraceResolver({
-    traceScopeKey,
-    connectionStatus,
-    config,
-    requestLogDownloading
-  });
 
   const logScrollerRef = useRef<ReturnType<typeof useLogScroller> | null>(null);
   const longPressRef = useRef<{
@@ -737,7 +726,6 @@ export function LogsPage() {
                 ) : (
                   <div className={styles.logList}>
                     {parsedVisibleLines.map((line, index) => {
-                      const canTraceRequest = isTraceableRequestPath(line.path);
                       const rowClassNames = [styles.logRow];
                       if (line.level === 'warn') rowClassNames.push(styles.rowWarn);
                       if (line.level === 'error' || line.level === 'fatal')
@@ -828,21 +816,6 @@ export function LogsPage() {
                             )}
 
                             {line.message && <span className={styles.message}>{line.message}</span>}
-
-                            {canTraceRequest && (
-                              <button
-                                type="button"
-                                className={styles.traceButton}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  cancelLongPress();
-                                  trace.openTraceModal(line);
-                                }}
-                                title={t('logs.trace_button')}
-                              >
-                                {t('logs.trace_button')}
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -921,174 +894,6 @@ export function LogsPage() {
           </Card>
         )}
       </div>
-
-      <Modal
-        open={Boolean(trace.traceLogLine)}
-        onClose={trace.closeTraceModal}
-        title={t('logs.trace_title')}
-        footer={
-          <>
-            {trace.traceLogLine?.requestId && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  if (trace.traceLogLine?.requestId) {
-                    void downloadRequestLog(trace.traceLogLine.requestId);
-                  }
-                }}
-                loading={requestLogDownloading}
-              >
-                {t('logs.trace_download_request_log')}
-              </Button>
-            )}
-            <Button
-              variant="secondary"
-              onClick={trace.closeTraceModal}
-              disabled={requestLogDownloading}
-            >
-              {t('common.close')}
-            </Button>
-          </>
-        }
-      >
-        {trace.traceLogLine && (
-          <div className={styles.tracePanel}>
-            <div className={styles.traceNotice}>{t('logs.trace_notice')}</div>
-
-            <h3 className={styles.traceSectionTitle}>{t('logs.trace_log_info')}</h3>
-            <div className={styles.traceInfoGrid}>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_request_id')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.requestId || '-'}</span>
-              </div>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_method')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.method || '-'}</span>
-              </div>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_path')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.path || '-'}</span>
-              </div>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_status_code')}</span>
-                <span className={styles.traceInfoValue}>
-                  {typeof trace.traceLogLine.statusCode === 'number'
-                    ? trace.traceLogLine.statusCode
-                    : '-'}
-                </span>
-              </div>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_latency')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.latency || '-'}</span>
-              </div>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_ip')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.ip || '-'}</span>
-              </div>
-              <div className={styles.traceInfoItem}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_timestamp')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.timestamp || '-'}</span>
-              </div>
-              <div className={`${styles.traceInfoItem} ${styles.traceInfoItemWide}`}>
-                <span className={styles.traceInfoLabel}>{t('logs.trace_message')}</span>
-                <span className={styles.traceInfoValue}>{trace.traceLogLine.message || '-'}</span>
-              </div>
-            </div>
-
-            <div className={styles.traceCandidatesHeader}>
-              <h3 className={styles.traceSectionTitle}>{t('logs.trace_candidates_title')}</h3>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  void trace.refreshTraceUsageDetails().catch(() => {});
-                }}
-                loading={trace.traceLoading}
-                disabled={requestLogDownloading}
-              >
-                {t('common.refresh')}
-              </Button>
-            </div>
-            {trace.traceLoading ? (
-              <div className="hint">{t('logs.trace_loading')}</div>
-            ) : trace.traceError ? (
-              <div className="error-box">{trace.traceError}</div>
-            ) : trace.traceCandidates.length === 0 ? (
-              <div className="hint">{t('logs.trace_no_match')}</div>
-            ) : (
-              <div className={styles.traceCandidates}>
-                {trace.traceCandidates.map((candidate) => {
-                  const sourceInfo = trace.resolveTraceSourceInfo(
-                    String(candidate.detail.source ?? ''),
-                    candidate.detail.auth_index
-                  );
-                  return (
-                    <div
-                      key={`${candidate.detail.__endpoint}-${candidate.detail.__modelName}-${candidate.detail.timestamp}-${candidate.detail.source}`}
-                      className={styles.traceCandidate}
-                    >
-                      <div className={styles.traceCandidateHeader}>
-                        {candidate.modelMatched && (
-                          <span className={styles.traceModelBadge}>
-                            {t('logs.trace_model_matched')}
-                          </span>
-                        )}
-                        {candidate.timeDeltaMs !== null && (
-                          <span className={styles.traceDelta}>
-                            {t('logs.trace_delta_seconds', {
-                              seconds: (candidate.timeDeltaMs / 1000).toFixed(2)
-                            })}
-                          </span>
-                        )}
-                      </div>
-                      <div className={styles.traceCandidateGrid}>
-                        <div className={styles.traceInfoItem}>
-                          <span className={styles.traceInfoLabel}>{t('logs.trace_endpoint')}</span>
-                          <span className={styles.traceInfoValue}>{candidate.detail.__endpoint}</span>
-                        </div>
-                        <div className={styles.traceInfoItem}>
-                          <span className={styles.traceInfoLabel}>{t('logs.trace_model')}</span>
-                          <span className={styles.traceInfoValue}>{candidate.detail.__modelName || '-'}</span>
-                        </div>
-                        <div className={styles.traceInfoItem}>
-                          <span className={styles.traceInfoLabel}>{t('logs.trace_source')}</span>
-                          <span
-                            className={styles.traceInfoValue}
-                            title={String(candidate.detail.source || '-')}
-                          >
-                            <span>{sourceInfo.displayName}</span>
-                            {sourceInfo.type && (
-                              <span className={styles.traceSourceType}>{sourceInfo.type}</span>
-                            )}
-                          </span>
-                        </div>
-                        <div className={styles.traceInfoItem}>
-                          <span className={styles.traceInfoLabel}>{t('logs.trace_auth_index')}</span>
-                          <span className={styles.traceInfoValue}>
-                            {candidate.detail.auth_index ?? '-'}
-                          </span>
-                        </div>
-                        <div className={styles.traceInfoItem}>
-                          <span className={styles.traceInfoLabel}>{t('logs.trace_timestamp')}</span>
-                          <span className={styles.traceInfoValue}>
-                            {candidate.detail.timestamp || '-'}
-                          </span>
-                        </div>
-                        <div className={styles.traceInfoItem}>
-                          <span className={styles.traceInfoLabel}>{t('logs.trace_result')}</span>
-                          <span className={styles.traceInfoValue}>
-                            {candidate.detail.failed ? t('stats.failure') : t('stats.success')}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
 
       <Modal
         open={Boolean(requestLogId)}

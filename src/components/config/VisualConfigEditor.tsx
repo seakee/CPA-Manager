@@ -789,13 +789,6 @@ export function VisualConfigEditor({
                   disabled={disabled}
                   onChange={(loggingToFile) => onChange({ loggingToFile })}
                 />
-                <ToggleRow
-                  title={t('config_management.visual.sections.system.usage_statistics')}
-                  description={t('config_management.visual.sections.system.usage_statistics_desc')}
-                  checked={values.usageStatisticsEnabled}
-                  disabled={disabled}
-                  onChange={(usageStatisticsEnabled) => onChange({ usageStatisticsEnabled })}
-                />
               </SectionGrid>
 
               <SectionGrid>

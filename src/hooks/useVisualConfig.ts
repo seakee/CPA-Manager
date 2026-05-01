@@ -614,12 +614,6 @@ function getNextDirtyFields(
       nextValues.logsMaxTotalSizeMb === baselineValues.logsMaxTotalSizeMb
     );
   }
-  if (Object.prototype.hasOwnProperty.call(patch, 'usageStatisticsEnabled')) {
-    updateDirty(
-      'usageStatisticsEnabled',
-      nextValues.usageStatisticsEnabled === baselineValues.usageStatisticsEnabled
-    );
-  }
   if (Object.prototype.hasOwnProperty.call(patch, 'proxyUrl')) {
     updateDirty('proxyUrl', nextValues.proxyUrl === baselineValues.proxyUrl);
   }
@@ -846,7 +840,6 @@ export function useVisualConfig() {
         commercialMode: Boolean(parsed['commercial-mode']),
         loggingToFile: Boolean(parsed['logging-to-file']),
         logsMaxTotalSizeMb: String(parsed['logs-max-total-size-mb'] ?? ''),
-        usageStatisticsEnabled: Boolean(parsed['usage-statistics-enabled']),
 
         proxyUrl: typeof parsed['proxy-url'] === 'string' ? parsed['proxy-url'] : '',
         forceModelPrefix: Boolean(parsed['force-model-prefix']),
@@ -961,7 +954,6 @@ export function useVisualConfig() {
         setBooleanInDoc(doc, ['commercial-mode'], values.commercialMode);
         setBooleanInDoc(doc, ['logging-to-file'], values.loggingToFile);
         setIntFromStringInDoc(doc, ['logs-max-total-size-mb'], values.logsMaxTotalSizeMb);
-        setBooleanInDoc(doc, ['usage-statistics-enabled'], values.usageStatisticsEnabled);
 
         setStringInDoc(doc, ['proxy-url'], values.proxyUrl);
         setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);

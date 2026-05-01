@@ -1,6 +1,6 @@
 # CLI Proxy API Management Center
 
-A single-file Web UI (React + TypeScript) for operating and troubleshooting the **CLI Proxy API** via its **Management API** (config, credentials, logs, and usage).
+A single-file Web UI (React + TypeScript) for operating and troubleshooting the **CLI Proxy API** via its **Management API** (config, credentials, and logs).
 
 [中文文档](README_CN.md)
 
@@ -12,7 +12,7 @@ Since version 6.0.19, the Web UI ships with the main program; access it via `/ma
 
 ## What this is (and isn’t)
 
-- This repository is the Web UI only. It talks to the CLI Proxy API **Management API** (`/v0/management`) to read/update config, upload credentials, view logs, and inspect usage.
+- This repository is the Web UI only. It talks to the CLI Proxy API **Management API** (`/v0/management`) to read/update config, upload credentials, and view logs.
 - It is **not** a proxy and does not forward traffic.
 
 ## Quick start
@@ -74,7 +74,7 @@ See `api.md` for the full authentication rules, server-side limits, and edge cas
 ## What you can manage (mapped to the UI pages)
 
 - **Dashboard**: connection status, server version/build date, quick counts, model availability snapshot.
-- **Basic Settings**: debug, proxy URL, request retry, quota fallback (switch project or preview models when limits reached), usage statistics, request logging, file logging, WebSocket auth.
+- **Basic Settings**: debug, proxy URL, request retry, quota fallback (switch project or preview models when limits reached), request logging, file logging, WebSocket auth.
 - **API Keys**: manage proxy `api-keys` (add/edit/delete).
 - **AI Providers**:
   - Gemini/Codex/Claude/Vertex key entries (base URL, headers, proxy, model aliases, excluded models, prefix).
@@ -83,7 +83,6 @@ See `api.md` for the full authentication rules, server-side limits, and edge cas
 - **Auth Files**: upload/download/delete JSON credentials, filter/search/pagination, runtime-only indicators, view supported models per credential (when the server supports it), manage OAuth excluded models (supports `*` wildcards), configure OAuth model alias mappings.
 - **OAuth**: start OAuth/device flows for supported providers, poll status, optionally submit callback `redirect_url`; includes iFlow cookie import.
 - **Quota Management**: manage quota limits and usage for Claude, Antigravity, Codex, Gemini CLI, and other providers.
-- **Usage**: requests/tokens charts (hour/day), per-API & per-model breakdown, cached/reasoning token breakdown, RPM/TPM window, optional cost estimation with locally-saved model pricing.
 - **Config**: edit `/config.yaml` in-browser with YAML highlighting + search, then save/reload.
 - **Logs**: tail logs with incremental polling, auto-refresh, search, hide management traffic, clear logs; download request error log files.
 - **System**: quick links + fetch `/v1/models` (grouped view). Requires at least one proxy API key to query models.

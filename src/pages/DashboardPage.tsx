@@ -367,12 +367,6 @@ export function DashboardPage() {
               </span>
             </div>
             <div className={styles.configPill}>
-              <span className={styles.configPillLabel}>{t('basic_settings.usage_statistics_enable')}</span>
-              <span className={`${styles.configPillValue} ${config.usageStatisticsEnabled ? styles.on : styles.off}`}>
-                {config.usageStatisticsEnabled ? t('common.yes') : t('common.no')}
-              </span>
-            </div>
-            <div className={styles.configPill}>
               <span className={styles.configPillLabel}>{t('basic_settings.logging_to_file_enable')}</span>
               <span className={`${styles.configPillValue} ${config.loggingToFile ? styles.on : styles.off}`}>
                 {config.loggingToFile ? t('common.yes') : t('common.no')}
