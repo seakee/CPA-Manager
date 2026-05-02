@@ -32,14 +32,7 @@ const registerIdentity = (
     return;
   }
 
-  if (existing === null) {
-    return;
-  }
-
-  if (existing.identityKey === entry.identityKey) {
-    return;
-  }
-
+  if (existing === null || existing.identityKey === entry.identityKey) return;
   map.set(key, null);
 };
 
@@ -126,9 +119,7 @@ export function resolveSourceDisplay(
 
   if (authIndexKey) {
     const matchedByAuthIndex = sourceInfoMap.byAuthIndex.get(authIndexKey);
-    if (matchedByAuthIndex) {
-      return matchedByAuthIndex;
-    }
+    if (matchedByAuthIndex) return matchedByAuthIndex;
 
     const authInfo = authFileMap.get(authIndexKey);
     if (authInfo) {
@@ -141,9 +132,7 @@ export function resolveSourceDisplay(
   }
 
   const matchedBySource = source ? sourceInfoMap.bySource.get(source) : null;
-  if (matchedBySource) {
-    return matchedBySource;
-  }
+  if (matchedBySource) return matchedBySource;
 
   if (source) {
     return {

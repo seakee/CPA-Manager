@@ -53,12 +53,6 @@ export const configApi = {
     apiClient.put('/quota-exceeded/switch-preview-model', { value: enabled }),
 
   /**
-   * 使用统计开关
-   */
-  updateUsageStatistics: (enabled: boolean) =>
-    apiClient.put('/usage-statistics-enabled', { value: enabled }),
-
-  /**
    * 请求日志开关
    */
   updateRequestLog: (enabled: boolean) => apiClient.put('/request-log', { value: enabled }),

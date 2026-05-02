@@ -40,7 +40,7 @@
   right: 0;
   left: 0;
   z-index: $z-dropdown - 2;
-  height: 188px;
+  height: 141px;
   pointer-events: none;
   background: linear-gradient(
     180deg,
@@ -129,10 +129,10 @@
     }
   }
 
+  .mobile-sidebar-actions,
   .header-actions {
     position: absolute;
     top: var(--shell-gutter);
-    right: var(--shell-gutter);
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -150,6 +150,16 @@
     pointer-events: auto;
   }
 
+  .mobile-sidebar-actions {
+    left: var(--shell-gutter);
+    display: none;
+  }
+
+  .header-actions {
+    right: var(--shell-gutter);
+  }
+
+  .mobile-sidebar-actions .btn,
   .header-actions .btn {
     width: var(--floating-control-size);
     height: var(--floating-control-size);
@@ -590,7 +600,7 @@
   }
 
   .top-gradient-blur {
-    height: 152px;
+    height: 114px;
   }
 
   .main-header {
@@ -601,7 +611,18 @@
     .header-actions {
       top: var(--shell-gutter);
       right: var(--shell-gutter);
-      max-width: calc(100vw - var(--shell-gutter) - var(--shell-gutter));
+      max-width: calc(
+        100vw - var(--shell-gutter) - var(--shell-gutter) - var(--floating-control-size) - 14px
+      );
+      padding: 5px;
+      gap: 2px;
+      border-radius: 14px;
+    }
+
+    .mobile-sidebar-actions {
+      display: inline-flex;
+      top: var(--shell-gutter);
+      left: var(--shell-gutter);
       padding: 5px;
       gap: 2px;
       border-radius: 14px;

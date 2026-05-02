@@ -10,7 +10,6 @@ import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { obfuscatedStorage } from '@/services/storage/secureStorage';
 import { apiClient } from '@/services/api/client';
 import { useConfigStore } from './useConfigStore';
-import { useUsageStatsStore } from './useUsageStatsStore';
 import { useModelsStore } from './useModelsStore';
 import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
 
@@ -139,7 +138,6 @@ export const useAuthStore = create<AuthStoreState>()(
       logout: () => {
         restoreSessionPromise = null;
         useConfigStore.getState().clearCache();
-        useUsageStatsStore.getState().clearUsageStats();
         useModelsStore.getState().clearCache();
         set({
           isAuthenticated: false,

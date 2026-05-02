@@ -321,7 +321,9 @@
   flex: 1 1 auto;
   min-height: 280px;
   max-height: calc(100vh - 320px);
+  height: auto;
   overflow: auto;
+  resize: vertical;
   position: relative;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
@@ -334,9 +336,9 @@
 
   @include mobile {
     min-height: 360px;
+    height: 420px;
     max-height: 480px;
     flex: 0 0 auto;
-    overflow: auto;
   }
 }
 
@@ -608,156 +610,12 @@
   }
 }
 
-.traceButton {
-  @include button-reset;
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: $radius-full;
-  border: 1px solid rgba($primary-color, 0.3);
-  background: rgba($primary-color, 0.1);
-  color: var(--primary-color);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
-
-  &:hover {
-    background: rgba($primary-color, 0.16);
-    border-color: rgba($primary-color, 0.45);
-  }
-}
-
-.tracePanel {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-sm;
-}
-
-.traceNotice {
-  padding: 8px 10px;
-  border-radius: $radius-md;
-  border: 1px solid var(--warning-border);
-  background: var(--warning-bg);
-  color: var(--warning-text);
-  font-size: 12px;
-}
-
-.traceSectionTitle {
-  margin: 4px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.traceCandidatesHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.traceInfoGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-
-  @include mobile {
-    grid-template-columns: 1fr;
-  }
-}
-
-.traceInfoItem {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: var(--bg-secondary);
-}
-
-.traceInfoItemWide {
-  grid-column: 1 / -1;
-}
-
-.traceInfoLabel {
-  font-size: 11px;
-  color: var(--text-secondary);
-  font-weight: 700;
-}
-
-.traceInfoValue {
-  font-size: 12px;
-  color: var(--text-primary);
-  word-break: break-word;
-}
-
-.traceSourceType {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 6px;
-  padding: 0 6px;
-  border-radius: $radius-full;
-  border: 1px solid var(--border-color);
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-primary);
-}
-
-.traceCandidates {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 320px;
-  overflow: auto;
-}
-
-.traceCandidate {
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  padding: 10px;
-  background: var(--bg-secondary);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.traceCandidateHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.traceModelBadge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: $radius-full;
-  border: 1px solid var(--success-badge-border, #6ee7b7);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--success-badge-text, #065f46);
-  background: var(--success-badge-bg, #d1fae5);
-}
-
-.traceDelta {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.traceCandidateGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-
-  @include mobile {
-    grid-template-columns: 1fr;
+@media (max-height: 960px) {
+  @media (min-width: 769px) {
+    .logPanel {
+      min-height: 160px;
+      max-height: calc(100vh - 300px);
+    }
   }
 }
 
@@ -779,13 +637,25 @@
     gap: $spacing-md;
   }
 
-  .logCard {
-    padding: $spacing-md;
+  @media (min-width: 769px) {
+    .filters {
+      flex: 0 0 auto;
+      gap: $spacing-sm;
+      margin-bottom: $spacing-sm;
+      max-height: 260px;
+      overflow: auto;
+      padding-right: 4px;
+      overscroll-behavior: contain;
+    }
+
+    .logPanel {
+      min-height: 0;
+      max-height: calc(100vh - 280px);
+    }
   }
 
-  .logPanel {
-    min-height: 200px;
-    max-height: calc(100vh - 280px);
+  .logCard {
+    padding: $spacing-md;
   }
 
   .logRow {
@@ -822,13 +692,19 @@
     gap: $spacing-sm;
   }
 
-  .logCard {
-    padding: $spacing-sm;
+  @media (min-width: 769px) {
+    .filters {
+      max-height: 180px;
+    }
+
+    .logPanel {
+      min-height: 0;
+      max-height: calc(100vh - 220px);
+    }
   }
 
-  .logPanel {
-    min-height: 160px;
-    max-height: calc(100vh - 220px);
+  .logCard {
+    padding: $spacing-sm;
   }
 
   .logRow {
