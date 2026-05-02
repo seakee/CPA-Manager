@@ -1,56 +1,245 @@
 # CLI Proxy API 管理中心
 
-这是一个面向 **CLI Proxy API** 的单文件 Web UI（React + TypeScript），通过 **Management API** 完成运维、观测与故障排查。
-
-它把配置管理、提供商配置、认证文件、OAuth、配额、使用统计、运行时监控、日志和系统工具集中到一个界面里。
-
 [English](README.md)
 
-**主项目**: https://github.com/router-for-me/CLIProxyAPI  
-**示例地址**: https://remote.router-for.me/  
-**后端最低版本**: >= 6.8.0（推荐 >= 6.8.15）
+这是面向 **CLI Proxy API（CPA）** 的单文件 Web 管理面板，并提供可选的 **Usage Service** 用于持久化请求统计。
 
-从 `6.0.19` 开始，Web UI 会随主程序一起分发。服务启动后，可直接通过 API 端口访问 `/management.html`。
+CPA 上游已经移除内存聚合的 `/usage`、`/usage/export`、`/usage/import` 端点。当前方案通过常驻服务消费 CPA 的 Redis RESP 用量队列，把请求级事件写入 SQLite，并向面板提供兼容 `/usage` 的查询接口。
 
-## 这是什么
+- **主项目**: https://github.com/router-for-me/CLIProxyAPI
+- **示例地址**: https://remote.router-for.me/
+- **推荐 CPA 版本**: >= 6.8.15
 
-- 本仓库只包含 Web 管理界面本身
-- 它通过 CLI Proxy API 的 **Management API**（`/v0/management`）读取和修改运行状态
-- 它 **不是** 代理本体，也不负责转发流量
+## 提供什么
 
-## 当前分支亮点
+- 面向 CPA Management API（`/v0/management`）的单文件 React 管理面板
+- Docker 化 Usage Service，用 SQLite 持久化请求统计
+- 两种部署模式：
+  - **完整 Docker 方案**：访问 Usage Service 内置面板，登录时只填写 CPA 地址和 Management Key
+  - **CPA 控制面板方案**：继续使用 CPA 的 `/management.html`，然后在面板中配置单独部署的 Usage Service 地址
+- 运行时监控、账号/模型/渠道拆解、费用估算、导入导出、认证文件管理、配额视图、日志、配置编辑和系统工具
 
-### 请求监控中心
+## 选择部署模式
 
-当前分支新增了 `/monitoring` 请求监控页面，重点解决运行时观测问题。
+| 模式 | 入口地址 | 用户需要配置 | 适用场景 |
+|---|---|---|---|
+| 完整 Docker 方案 | `http://<host>:18317/management.html` | 登录时填写 CPA 地址 + Management Key | 新部署、单入口、最少浏览器/CORS 问题 |
+| CPA 控制面板方案 | `http://<cpa-host>:8317/management.html` | 在「系统信息 -> 外部用量统计服务」配置 Usage Service 地址 | 保留 CPA 自动载入面板的现有习惯 |
+| 前端开发方案 | Vite dev server 或 `dist/index.html` | CPA 地址，可选 Usage Service 地址 | 本地开发 |
 
-- 把 `/usage`、`auth-files`、`openai-compatibility` 三类数据聚合到一个视图
-- 统一展示模型调用量、成功失败、Token 结构、延迟、估算花费、RPM/TPM 与近似任务桶
-- 提供账号、模型、渠道、失败来源等多维拆解，并支持实时筛选和自动刷新
-- 支持账号级下钻，以及按账号实时拉取 Codex 配额信息
+完整 Docker 方案不内置 CPA 本体。CPA 仍然作为上游服务独立运行；Docker 镜像提供 Usage Service 和内置管理面板。
 
-### Codex 账号巡检
+## CPA 前置条件
 
-当前分支同时新增了 `/monitoring/codex-inspection`，用于 Codex 认证池的运维清理。
+请求统计依赖 CPA 的 Redis RESP 用量队列：
 
-- 批量探测 Codex 账号状态
-- 识别失效账号、额度耗尽账号和可恢复启用的禁用账号
-- 为每个账号生成 `delete`、`disable`、`enable` 建议动作
-- 支持批量执行、单条执行、抽样、并发、超时、重试以及巡检后自动执行
-- 有后端 `clean` 配置时可继承默认值，同时把浏览器侧覆盖配置本地持久化
+- CPA 必须启用 Management，因为 RESP 与 `/v0/management` 使用相同的可用性条件和 Management Key。
+- 在 CPA 中启用用量发布：配置 `usage-statistics-enabled: true`，或通过 `PUT /usage-statistics-enabled` 提交 `{ "value": true }`。
+- RESP 监听在 CPA API 端口，通常是 `8317`；如果 CPA API 启用了 HTTPS/TLS，RESP 也使用同一个 TLS listener。
+- CPA 在内存中保留队列项的时间由 `redis-usage-queue-retention-seconds` 控制，默认 `60` 秒，最大 `3600` 秒。Usage Service 应保持常驻运行。
+- 同一个 CPA 实例只应有一个 Usage Service 消费用量队列。
 
-### 认证与账号兼容性增强
+## 架构
 
-为了支撑上述功能，这个分支还补了几类兼容性改进：
+### 完整 Docker 方案
 
-- 更稳健的 Codex 账号 ID 解析
-- 更完整的禁用状态识别
-- `/api-call` 未返回明确状态码时的兜底处理
-- 认证文件启用、禁用、删除流程的更多兼容分支
+```text
+浏览器
+  -> Usage Service :18317
+      -> 内置 management.html
+      -> /v0/management/usage 从 SQLite 返回
+      -> 其他 /v0/management/* 反代到 CPA
+      -> RESP 消费器 -> CPA API 端口
+      -> SQLite /data/usage.sqlite
+```
+
+登录页会识别当前由 Usage Service 托管。你填写 CPA 地址和 Management Key 后，Usage Service 会验证 CPA Management API，保存设置到 SQLite，启动 RESP 采集器，并从同源提供完整管理面板。
+
+### CPA 控制面板方案
+
+```text
+浏览器
+  -> CPA /management.html
+      -> 普通 CPA Management API 请求仍然访问 CPA
+      -> usage 相关请求访问已配置的 Usage Service
+
+Usage Service
+  -> RESP 消费器 -> CPA API 端口
+  -> SQLite /data/usage.sqlite
+```
+
+当你希望保留 CPA 自动下载并托管面板的机制时，使用这个方案。单独部署 Usage Service，然后在「系统信息 -> 外部用量统计服务」中启用并填写地址。
+
+## 快速开始：完整 Docker 方案
+
+### DockerHub 镜像
+
+```bash
+docker run -d \
+  --name cpa-usage-service \
+  --restart unless-stopped \
+  -p 18317:18317 \
+  -v cpa-usage-data:/data \
+  seakee/cpa-usage-service:latest
+```
+
+打开：
+
+```text
+http://<host>:18317/management.html
+```
+
+填写：
+
+- CPA 地址：
+  - Docker Desktop 访问宿主机 CPA：`http://host.docker.internal:8317`
+  - 同一 compose 网络：`http://cli-proxy-api:8317`
+  - 远程 CPA：`https://your-cpa.example.com`
+- Management Key
+
+如果你的镜像发布在其他 DockerHub 命名空间，把 `seakee/cpa-usage-service:latest` 替换成实际镜像名。
+
+### Docker Compose
+
+```yaml
+services:
+  cpa-usage-service:
+    image: seakee/cpa-usage-service:latest
+    restart: unless-stopped
+    ports:
+      - "18317:18317"
+    volumes:
+      - cpa-usage-data:/data
+
+volumes:
+  cpa-usage-data:
+```
+
+启动：
+
+```bash
+docker compose up -d
+```
+
+### Linux 宿主机运行 CPA
+
+如果 CPA 直接运行在 Linux 宿主机，Usage Service 运行在 Docker 中，需要添加 host gateway：
+
+```bash
+docker run -d \
+  --name cpa-usage-service \
+  --restart unless-stopped \
+  --add-host=host.docker.internal:host-gateway \
+  -p 18317:18317 \
+  -v cpa-usage-data:/data \
+  seakee/cpa-usage-service:latest
+```
+
+然后 CPA 地址填写 `http://host.docker.internal:8317`。
+
+## 快速开始：CPA 控制面板方案
+
+1. 正常启动 CPA，打开：
+
+   ```text
+   http://<cpa-host>:8317/management.html
+   ```
+
+2. 单独部署 Usage Service：
+
+   ```bash
+   docker run -d \
+     --name cpa-usage-service \
+     --restart unless-stopped \
+     -p 18317:18317 \
+     -v cpa-usage-data:/data \
+     seakee/cpa-usage-service:latest
+   ```
+
+3. 在 CPA 面板进入：
+
+   ```text
+   系统信息 -> 外部用量统计服务
+   ```
+
+4. 启用并填写：
+
+   ```text
+   http://<usage-service-host>:18317
+   ```
+
+5. 点击「保存并连接」。
+
+面板会把当前 CPA 地址和 Management Key 发送给 Usage Service。之后监控页从 Usage Service 读取用量数据，其他管理功能仍然访问 CPA。
+
+## 本地从源码构建
+
+```bash
+docker compose -f docker-compose.usage.yml up --build
+```
+
+该命令会构建 React 面板，并把它内置到 Go Usage Service 二进制中。
+
+## Usage Service 配置项
+
+大多数用户可以直接在面板中配置 CPA 地址和 Management Key。环境变量适合自动化部署。
+
+| 变量 | 默认值 | 说明 |
+|---|---:|---|
+| `HTTP_ADDR` | `0.0.0.0:18317` | Usage Service HTTP 监听地址 |
+| `USAGE_DB_PATH` | `/data/usage.sqlite` | SQLite 数据库路径 |
+| `USAGE_DATA_DIR` | `/data` | 未覆盖 `USAGE_DB_PATH` 时的数据目录 |
+| `CPA_UPSTREAM_URL` | 空 | 可选 CPA 地址，用于无人值守启动 |
+| `CPA_MANAGEMENT_KEY` | 空 | 可选 CPA Management Key，用于无人值守启动 |
+| `CPA_MANAGEMENT_KEY_FILE` | `/run/secrets/cpa_management_key` | 可选密钥文件 |
+| `USAGE_RESP_QUEUE` | `usage` | RESP key 参数；当前 CPA 会忽略该值，除非上游行为变化，否则保持默认即可 |
+| `USAGE_RESP_POP_SIDE` | `right` | `right` 使用 `RPOP`；`left` 使用 `LPOP` |
+| `USAGE_BATCH_SIZE` | `100` | 每次最多弹出记录数 |
+| `USAGE_POLL_INTERVAL_MS` | `500` | 队列空闲时轮询间隔 |
+| `USAGE_QUERY_LIMIT` | `50000` | 兼容 `/usage` 最多返回的近期事件数 |
+| `USAGE_CORS_ORIGINS` | `*` | CPA 控制面板方案下允许的浏览器来源 |
+| `USAGE_RESP_TLS_SKIP_VERIFY` | `false` | RESP TLS 连接是否跳过证书校验 |
+| `PANEL_PATH` | 空 | 使用自定义 `management.html` 替代内置面板 |
+
+如果设置了 `CPA_UPSTREAM_URL` 和 `CPA_MANAGEMENT_KEY`，服务启动后会自动开始采集。否则通过面板 setup 流程配置。
+
+## 数据与安全说明
+
+- SQLite 数据存储在 `/data`，必须挂载到持久化 volume 或宿主机目录。
+- 完整 Docker 方案会把 CPA 地址和 Management Key 保存到 SQLite `settings` 表，用于容器重启后恢复采集。
+- 请保护 `/data` volume，它包含用量元数据和保存的 Management Key。
+- Usage Service 会在保存 raw JSON 快照前脱敏疑似密钥字段，但请求元数据仍可能暴露模型、接口、账号标签和 token 用量。
+- RESP 队列是弹出式消费，不要让多个 Usage Service 同时消费同一个 CPA 实例。
+- 如果 Usage Service 停机超过 CPA 队列保留时间，该时段用量无法在不修改 CPA 的情况下恢复。
+
+## 运行时接口
+
+| 接口 | 用途 |
+|---|---|
+| `GET /health` | 基础健康检查 |
+| `GET /status` | 采集器、SQLite、事件数、错误状态 |
+| `GET /usage-service/info` | 让前端识别完整 Docker 方案 |
+| `POST /setup` | 保存 CPA 地址和 Management Key，并启动采集 |
+| `GET /v0/management/usage` | 面板兼容用量数据 |
+| `GET /v0/management/usage/export` | JSONL 导出用量事件 |
+| `POST /v0/management/usage/import` | JSONL 导入用量事件 |
+| `/v0/management/*` | 除 usage 外反代到 CPA |
+
+setup 后，用量和反代接口需要使用同一个 Management Key 作为 Bearer token。
+
+## 功能概览
+
+- **仪表盘**：连接状态、后端版本、快速健康概览
+- **配置管理**：可视化和源码模式编辑 CPA 配置
+- **AI 提供商**：Gemini、Codex、Claude、Vertex、OpenAI 兼容渠道、Ampcode
+- **认证文件**：上传、下载、删除、状态、OAuth 排除模型、模型别名
+- **配额管理**：支持提供商的配额视图
+- **请求监控**：持久化用量 KPI、模型/渠道/账号拆解、失败分析、实时表格
+- **Codex 账号巡检**：批量探测 Codex 认证池并给出清理建议
+- **日志**：增量读取和筛选文件日志
+- **系统信息**：模型列表、版本检查、本地状态工具、外部 Usage Service 配置
 
 ## 功能截图
-
-当前分支新增的监控与巡检界面截图：
 
 ![功能截图 1](img/image.png)
 
@@ -58,168 +247,56 @@
 
 ![功能截图 3](img/image_2.png)
 
-## 快速开始
+## 开发命令
 
-### 方式 A：使用 CLI Proxy API 自带的 Web UI
-
-1. 启动 CLI Proxy API 服务。
-2. 打开 `http://<host>:<api_port>/management.html`。
-3. 输入 **管理密钥** 并连接。
-
-页面会根据当前 URL 自动推断 API 地址，也支持手动覆盖。
-
-### 方式 B：本地开发调试
+前端：
 
 ```bash
 npm install
 npm run dev
-```
-
-然后访问 `http://localhost:5173`，并连接你的 CLI Proxy API 后端实例。
-
-### 方式 C：构建单文件 HTML
-
-```bash
-npm install
+npm run type-check
+npm run lint
 npm run build
 ```
 
-- 输出文件：`dist/index.html`
-- 资源会被内联为单文件
-- 发布时可重命名为 `management.html`
-- 本地预览：`npm run preview`
+Usage Service：
 
-提示：直接通过 `file://` 打开 `dist/index.html` 可能会遇到浏览器 CORS 限制，建议通过本地 HTTP 服务访问。
+```bash
+cd usage-service
+go test ./...
+go run ./cmd/cpa-usage-service
+```
 
-## 连接说明
-
-### API 地址
-
-以下输入格式都会被自动归一化：
-
-- `localhost:8317`
-- `http://192.168.1.10:8317`
-- `https://example.com:8317`
-- `http://example.com:8317/v0/management`
-
-### 管理密钥
-
-管理密钥会以如下形式随请求发送：
-
-- `Authorization: Bearer <MANAGEMENT_KEY>`
-
-它和界面里配置的代理 `api-keys` 不是一回事。后者是给客户端访问代理接口时使用的鉴权 key。
-
-### 远程管理
-
-如果你是从非 localhost 浏览器访问，服务端需要允许远程管理，例如：
-
-- `allow-remote-management: true`
-
-认证规则、访问频率限制和远程访问封禁由服务端负责。
-
-## 功能概览
-
-- **仪表盘**
-  - 展示连接状态、后端版本、构建时间与快速健康概览
-- **配置管理**
-  - 包括调试开关、代理地址、重试、配额回退、使用统计、请求日志、文件日志、WebSocket 鉴权，以及浏览器内编辑 `/config.yaml`
-- **AI 提供商**
-  - 覆盖 Gemini、Codex、Claude、Vertex、OpenAI 兼容渠道以及 Ampcode 集成
-- **认证文件**
-  - 支持上传、下载、删除、搜索、分页、runtime-only 标识、启用禁用流程、OAuth 排除模型与 OAuth 模型别名映射
-- **OAuth**
-  - 支持 OAuth 和设备码流程，并包含 iFlow Cookie 导入
-- **配额管理**
-  - 管理 Claude、Antigravity、Codex、Gemini CLI 等提供商的配额视图与相关操作
-- **请求监控**
-  - 提供运行时 KPI、趋势图、Token 结构、模型与渠道排行、失败焦点、账号汇总、实时筛选和准实时监控表
-- **Codex 账号巡检**
-  - 提供 Codex 认证池的巡检与清理工作流
-- **使用统计**
-  - 提供使用趋势、API 和模型拆分、缓存与推理 Token、导入导出，以及基于本地模型单价的费用估算
-- **日志**
-  - 支持增量追踪、自动刷新、搜索、隐藏管理流量、清空日志与错误日志下载
-- **系统信息**
-  - 提供快捷入口、本地状态清理工具，以及按分组展示 `/v1/models`
-
-## 使用说明补充
-
-- 请求监控依赖 `/usage` 数据。如果后端未启用使用统计，该页面只能展示有限的连接和配置状态。
-- “日志”导航项只会在开启文件日志后显示。
-- 认证文件相关功能是否完整可用，取决于后端是否支持对应接口和返回结构。
-- Codex 账号巡检会在执行动作时修改认证文件状态，包含删除、禁用、启用，执行前应先确认建议结果。
-
-## 技术栈
-
-- React 19 + TypeScript 5.9
-- Vite 7（单文件输出）
-- Zustand
-- Axios
-- react-router-dom v7
-- Chart.js
-- CodeMirror 6
-- SCSS Modules
-- i18next
-
-## 多语言支持
-
-当前支持四种语言：
-
-- 英文（`en`）
-- 简体中文（`zh-CN`）
-- 繁体中文（`zh-TW`）
-- 俄文（`ru`）
-
-界面语言会根据浏览器自动识别，也可以在 UI 中手动切换。
-
-## 浏览器兼容性
-
-- 构建目标：`ES2020`
-- 支持现代版 Chrome、Firefox、Safari、Edge
-- 兼容桌面、平板和移动端访问
-
-## 构建与发布说明
+## 构建与发布
 
 - Vite 输出单文件 `dist/index.html`
-- 资源通过 `vite-plugin-singlefile` 内联
-- 打 `vX.Y.Z` 标签会触发 `.github/workflows/release.yml` 发布 `dist/management.html`
-- 页脚 UI 版本会在构建时从 `VERSION`、git tag 或 `package.json` 注入
-
-## 安全提示
-
-- 管理密钥会保存在浏览器 `localStorage`，并使用轻量混淆格式（`enc::v1::...`），但仍应按敏感信息处理。
-- 请求监控与巡检页面会暴露账号标签、接口路径、模型和使用量数据，建议仅在可信设备和浏览器环境中使用。
-- 开启远程管理或执行删除类认证文件动作前，请先确认暴露面与影响范围。
+- 打 `vX.Y.Z` 标签会触发 `.github/workflows/release.yml`
+- 发布流程会上传 `dist/management.html` 到 GitHub Releases
+- 同一个 workflow 会构建 `Dockerfile.usage-service` 并推送到 DockerHub
+- 必需 GitHub secrets：
+  - `DOCKERHUB_USERNAME`
+  - `DOCKERHUB_TOKEN`
+- 可选 GitHub variable：
+  - `DOCKERHUB_IMAGE`，例如 `your-org/cpa-usage-service`
+- 如果未设置 `DOCKERHUB_IMAGE`，默认镜像名为 `<DOCKERHUB_USERNAME>/cpa-usage-service`
 
 ## 常见问题
 
-- **无法连接 / 401**：先确认 API 地址和管理密钥是否正确；远程访问还可能要求服务端开启远程管理。
-- **请求监控页面为空**：检查后端是否开启使用统计；没有 `/usage` 数据时，运行时分析无法完整展示。
-- **Codex 巡检结果不完整**：确认目标认证文件是否暴露了可用的 `auth_index`，以及后端是否允许管理端探测请求。
-- **日志页没有出现**：先在配置里开启文件日志。
-- **部分功能表现为不支持**：通常是后端版本较旧、接口不存在，或返回结构和当前 UI 兼容路径不完全一致。
-- **OpenAI 提供商测试失败**：该测试运行在浏览器侧，会受到网络和 CORS 影响，这不一定表示后端无法访问提供商。
+- **完整 Docker 方案无法连接 CPA**：确认容器内能访问 CPA 地址。Linux 宿主机 CPA 需要 `--add-host=host.docker.internal:host-gateway`。
+- **监控页为空**：确认 CPA 已启用使用统计，检查 Usage Service `/status`，并确认只有一个消费者。
+- **Usage Service 返回 401**：使用 setup 时保存的同一个 Management Key。
+- **Docker 面板数据不更新**：检查 `/status` 中的 `lastConsumedAt`、`lastInsertedAt`、`lastError`。
+- **CPA 控制面板方案有 CORS 错误**：将 `USAGE_CORS_ORIGINS` 设置为 CPA 面板来源；私有部署可保持默认 `*`。
+- **容器重建后数据丢失**：确认 `/data` 已挂载到 Docker volume 或宿主机目录。
 
-## 开发命令
+## 参考
 
-```bash
-npm run dev        # 启动 Vite 开发服务器
-npm run build      # tsc + Vite 构建
-npm run preview    # 本地预览 dist
-npm run lint       # ESLint
-npm run format     # 格式化 src/*
-npm run type-check # tsc --noEmit
-```
+- CLIProxyAPI: https://github.com/router-for-me/CLIProxyAPI
+- Redis 用量队列文档: https://help.router-for.me/management/redis-usage-queue.html
 
-## 贡献
+## 致谢
 
-欢迎提交 Issue 和 PR。建议附上：
-
-- 复现步骤
-- 后端版本与 UI 版本
-- UI 改动截图
-- `npm run lint`、`npm run type-check` 等验证记录
+- 感谢 [Linux.do](https://linux.do/) 社区对项目推广与反馈的支持。
 
 ## 许可证
 
