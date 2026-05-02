@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '@/services/api/client';
+import { usageServiceApi } from '@/services/api/usageService';
+import { useAuthStore, useUsageServiceStore } from '@/stores';
 import { loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
 
 export interface UsagePayload {
@@ -22,6 +24,9 @@ export interface UseUsageDataReturn {
 }
 
 export function useUsageData(): UseUsageDataReturn {
+  const managementKey = useAuthStore((state) => state.managementKey);
+  const usageServiceEnabled = useUsageServiceStore((state) => state.enabled);
+  const usageServiceBase = useUsageServiceStore((state) => state.serviceBase);
   const [usage, setUsage] = useState<UsagePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -36,7 +41,10 @@ export function useUsageData(): UseUsageDataReturn {
     setError('');
 
     try {
-      const payload = await apiClient.get<UsagePayload>('/usage');
+      const payload =
+        usageServiceEnabled && usageServiceBase
+          ? await usageServiceApi.getUsage(usageServiceBase, managementKey)
+          : await apiClient.get<UsagePayload>('/usage');
       if (requestIdRef.current !== requestId) return;
       setUsage(payload ?? null);
       setLastRefreshedAt(new Date());
@@ -48,7 +56,7 @@ export function useUsageData(): UseUsageDataReturn {
         setLoading(false);
       }
     }
-  }, []);
+  }, [managementKey, usageServiceBase, usageServiceEnabled]);
 
   useEffect(() => {
     setModelPricesState(loadModelPrices());

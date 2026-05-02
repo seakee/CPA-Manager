@@ -7,6 +7,7 @@ import { Select } from '@/components/ui/Select';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { IconEye, IconEyeOff } from '@/components/ui/icons';
 import { useAuthStore, useLanguageStore, useNotificationStore } from '@/stores';
+import { usageServiceApi } from '@/services/api/usageService';
 import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
@@ -89,6 +90,7 @@ export function LoginPage() {
   const [autoLoading, setAutoLoading] = useState(true);
   const [autoLoginSuccess, setAutoLoginSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [usageServiceMode, setUsageServiceMode] = useState(false);
 
   const detectedBase = useMemo(() => detectApiBaseFromLocation(), []);
   const languageOptions = useMemo(
@@ -112,6 +114,15 @@ export function LoginPage() {
   useEffect(() => {
     const init = async () => {
       try {
+        let detectedUsageService = false;
+        try {
+          const info = await usageServiceApi.getInfo(detectedBase);
+          detectedUsageService = info.service === 'cpa-usage-service';
+          setUsageServiceMode(detectedUsageService);
+        } catch {
+          detectedUsageService = false;
+        }
+
         const autoLoggedIn = await restoreSession();
         if (autoLoggedIn) {
           setAutoLoginSuccess(true);
@@ -121,7 +132,15 @@ export function LoginPage() {
             navigate(redirect, { replace: true });
           }, 1500);
         } else {
-          setApiBase(storedBase || detectedBase);
+          const lastCPAForUsageService = localStorage.getItem('cpa-usage-service:last-cpa-base') || '';
+          setApiBase(
+            detectedUsageService
+              ? lastCPAForUsageService
+              : storedBase || detectedBase
+          );
+          if (detectedUsageService) {
+            setShowCustomBase(true);
+          }
           setManagementKey(storedKey || '');
           setRememberPassword(storedRememberPassword || Boolean(storedKey));
         }
@@ -143,11 +162,23 @@ export function LoginPage() {
     }
 
     const baseToUse = apiBase ? normalizeApiBase(apiBase) : detectedBase;
+    if (usageServiceMode && !apiBase.trim()) {
+      setError(t('login.cpa_address_required', { defaultValue: '请输入 CPA 地址' }));
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
+      if (usageServiceMode) {
+        await usageServiceApi.setup(detectedBase, {
+          cpaBaseUrl: baseToUse,
+          managementKey: managementKey.trim(),
+        });
+        localStorage.setItem('cpa-usage-service:last-cpa-base', baseToUse);
+      }
       await login({
-        apiBase: baseToUse,
+        apiBase: usageServiceMode ? detectedBase : baseToUse,
         managementKey: managementKey.trim(),
         rememberPassword
       });
@@ -160,7 +191,17 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiBase, detectedBase, login, managementKey, navigate, rememberPassword, showNotification, t]);
+  }, [
+    apiBase,
+    detectedBase,
+    login,
+    managementKey,
+    navigate,
+    rememberPassword,
+    showNotification,
+    t,
+    usageServiceMode,
+  ]);
 
   const handleSubmitKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -227,28 +268,56 @@ export function LoginPage() {
               </div>
 
               <div className={styles.connectionBox}>
-                <div className={styles.label}>{t('login.connection_current')}</div>
+                <div className={styles.label}>
+                  {usageServiceMode
+                    ? t('login.cpa_connection_label', { defaultValue: 'CPA 连接地址' })
+                    : t('login.connection_current')}
+                </div>
                 <div className={styles.value}>{apiBase || detectedBase}</div>
-                <div className={styles.hint}>{t('login.connection_auto_hint')}</div>
+                <div className={styles.hint}>
+                  {usageServiceMode
+                    ? t('login.usage_service_mode_hint', {
+                        defaultValue: '当前面板由 Usage Service 托管，请填写 CPA API 地址。',
+                      })
+                    : t('login.connection_auto_hint')}
+                </div>
               </div>
 
-              <div className={styles.toggleAdvanced}>
-                <SelectionCheckbox
-                  checked={showCustomBase}
-                  onChange={setShowCustomBase}
-                  ariaLabel={t('login.custom_connection_label')}
-                  label={t('login.custom_connection_label')}
-                  labelClassName={styles.toggleLabel}
-                />
-              </div>
+              {!usageServiceMode && (
+                <div className={styles.toggleAdvanced}>
+                  <SelectionCheckbox
+                    checked={showCustomBase}
+                    onChange={setShowCustomBase}
+                    ariaLabel={t('login.custom_connection_label')}
+                    label={t('login.custom_connection_label')}
+                    labelClassName={styles.toggleLabel}
+                  />
+                </div>
+              )}
 
-              {showCustomBase && (
+              {(showCustomBase || usageServiceMode) && (
                 <Input
-                  label={t('login.custom_connection_label')}
-                  placeholder={t('login.custom_connection_placeholder')}
+                  label={
+                    usageServiceMode
+                      ? t('login.cpa_connection_label', { defaultValue: 'CPA 连接地址' })
+                      : t('login.custom_connection_label')
+                  }
+                  placeholder={
+                    usageServiceMode
+                      ? t('login.cpa_connection_placeholder', {
+                          defaultValue: '例如 http://127.0.0.1:8317',
+                        })
+                      : t('login.custom_connection_placeholder')
+                  }
                   value={apiBase}
                   onChange={(e) => setApiBase(e.target.value)}
-                  hint={t('login.custom_connection_hint')}
+                  hint={
+                    usageServiceMode
+                      ? t('login.cpa_connection_hint', {
+                          defaultValue: 'Usage Service 会用该地址连接 CPA Management API 和 RESP 用量队列。',
+                        })
+                      : t('login.custom_connection_hint')
+                  }
                 />
               )}
 

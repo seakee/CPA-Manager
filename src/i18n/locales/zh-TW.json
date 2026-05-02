@@ -1128,7 +1128,7 @@
     "top_model": "熱點模型",
     "top_channel": "熱點渠道",
     "usage_disabled_title": "尚未啟用使用統計",
-    "usage_disabled_body": "請求監控依賴 /usage 資料。請先在基本設定中開啟「使用統計」，否則此處只能顯示連線與設定狀態。",
+    "usage_disabled_body": "請求監控依賴 Usage Service 或相容用量資料。請先開啟「使用統計」並確認用量服務正在執行，否則此處只能顯示連線與設定狀態。",
     "zero_token_notice_title": "偵測到零 Token 模型呼叫",
     "zero_token_notice_body": "目前範圍內有 {{count}} 次零 Token 模型呼叫（{{models}}）。這類模型通常不是純 Token 計費，當前花費只能部分估算。",
     "model_calls": "模型呼叫數",

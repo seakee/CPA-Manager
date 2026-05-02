@@ -1,223 +1,300 @@
 # CLI Proxy API Management Center
 
-A single-file Web UI (React + TypeScript) for operating, observing, and troubleshooting **CLI Proxy API** through its **Management API**.
-
-It covers configuration, providers, auth files, OAuth flows, quota views, usage analytics, runtime monitoring, logs, and system utilities in one place.
-
 [中文文档](README_CN.md)
 
-**Main Project**: https://github.com/router-for-me/CLIProxyAPI  
-**Example URL**: https://remote.router-for.me/  
-**Minimum Backend Version**: >= 6.8.0 (recommended >= 6.8.15)
+A single-file Web UI for **CLI Proxy API (CPA)** plus an optional **Usage Service** for persistent usage analytics.
 
-Since `6.0.19`, the Web UI ships with the main program. Once the service is running, open `/management.html` on the API port.
+The CPA memory aggregation endpoints (`/usage`, `/usage/export`, `/usage/import`) have been removed upstream. This project now supports usage analytics through a long-running service that consumes the CPA Redis RESP usage queue, persists request events to SQLite, and exposes `/usage`-compatible APIs for the panel.
 
-## What this is
+- **Main project**: https://github.com/router-for-me/CLIProxyAPI
+- **Example URL**: https://remote.router-for.me/
+- **Recommended CPA version**: >= 6.8.15
 
-- This repository is the Web UI only.
-- It talks to the CLI Proxy API **Management API** (`/v0/management`) to read and update runtime state.
-- It is **not** a proxy and does not forward traffic itself.
+## What This Provides
 
-## Highlights on this branch
+- A single-file React management panel for CPA Management API (`/v0/management`)
+- A Dockerized Usage Service for SQLite-backed usage persistence
+- Two deployment modes:
+  - **Full Docker mode**: open the built-in panel from Usage Service and only enter the CPA URL + Management Key
+  - **CPA panel mode**: keep using CPA's `/management.html`, then configure a separately deployed Usage Service inside the panel
+- Runtime monitoring, account/model/channel breakdowns, estimated cost, imports/exports, auth-file operations, quota views, logs, config editing, and system utilities
 
-### Request Monitoring Center
+## Choose a Deployment Mode
 
-The current branch adds a dedicated runtime monitoring experience under `/monitoring`.
+| Mode | Entry URL | What the user configures | Best for |
+|---|---|---|---|
+| Full Docker mode | `http://<host>:18317/management.html` | CPA URL + Management Key on login | New deployments, one entry point, least browser/CORS complexity |
+| CPA panel mode | `http://<cpa-host>:8317/management.html` | Usage Service URL under **System -> External Usage Service** | Existing CPA automatic panel loading |
+| Frontend only | Vite dev server or `dist/index.html` | CPA URL, optionally Usage Service URL | Development |
 
-- Aggregates `/usage`, `auth-files`, and `openai-compatibility` data into one view
-- Tracks model-call volume, success and failure, token structure, latency, estimated cost, RPM/TPM, and approximate task buckets
-- Provides account, model, channel, and failure breakdowns with live filters and auto refresh
-- Includes account-level drill-down and live Codex quota lookups
+Full Docker mode does not bundle CPA itself. CPA still runs as the upstream service; the Docker image provides the Usage Service plus an embedded copy of this management panel.
 
-### Codex Account Inspection
+## CPA Prerequisites
 
-The current branch also adds `/monitoring/codex-inspection` for operational cleanup of Codex auth files.
+Request statistics require the CPA Redis RESP usage queue:
 
-- Probes Codex accounts in batch
-- Detects invalid accounts, quota exhaustion, and disabled-account recovery candidates
-- Suggests `delete`, `disable`, or `enable` actions per account
-- Supports batch execution, single-item execution, sampling, concurrency, timeout, retries, and optional post-run auto execution
-- Can inherit defaults from server-side `clean` config when available, while persisting browser-side overrides locally
+- CPA Management must be enabled because RESP uses the same availability and Management Key as `/v0/management`.
+- Enable usage publishing in CPA with `usage-statistics-enabled: true`, or through `PUT /usage-statistics-enabled` with `{ "value": true }`.
+- The RESP listener is on the CPA API port, usually `8317`; if CPA uses HTTPS/TLS, RESP uses the same TLS listener.
+- CPA keeps queue items in memory for `redis-usage-queue-retention-seconds`, default `60` seconds and maximum `3600` seconds. Keep Usage Service running continuously.
+- Exactly one Usage Service should consume the same CPA usage queue.
 
-### Better auth/account compatibility
+## Architecture
 
-Supporting changes on this branch improve several backend compatibility edges:
+### Full Docker Mode
 
-- Better Codex account ID resolution across different auth-file shapes
-- More robust disabled-state detection
-- Safer handling when `/api-call` returns no explicit status code
-- Additional auth-file mutation fallbacks for enable/disable/delete flows
+```text
+Browser
+  -> Usage Service :18317
+      -> built-in management.html
+      -> /v0/management/usage from SQLite
+      -> other /v0/management/* proxied to CPA
+      -> RESP consumer -> CPA API port
+      -> SQLite /data/usage.sqlite
+```
+
+The login page detects that it is hosted by Usage Service. You enter the CPA URL and Management Key. Usage Service validates the CPA Management API, stores the setup in SQLite, starts the RESP collector, and serves the panel from the same origin.
+
+### CPA Panel Mode
+
+```text
+Browser
+  -> CPA /management.html
+      -> normal CPA Management API calls stay on CPA
+      -> usage calls go to configured Usage Service URL
+
+Usage Service
+  -> RESP consumer -> CPA API port
+  -> SQLite /data/usage.sqlite
+```
+
+Use this when CPA still auto-downloads and serves the panel. Deploy Usage Service separately, then open **System -> External Usage Service**, enable it, enter the Usage Service URL, and save.
+
+## Quick Start: Full Docker Mode
+
+### DockerHub Image
+
+```bash
+docker run -d \
+  --name cpa-usage-service \
+  --restart unless-stopped \
+  -p 18317:18317 \
+  -v cpa-usage-data:/data \
+  seakee/cpa-usage-service:latest
+```
+
+Open:
+
+```text
+http://<host>:18317/management.html
+```
+
+Enter:
+
+- CPA URL:
+  - Docker Desktop host CPA: `http://host.docker.internal:8317`
+  - Same compose network: `http://cli-proxy-api:8317`
+  - Remote CPA: `https://your-cpa.example.com`
+- Management Key
+
+If your image is published under another DockerHub namespace, replace `seakee/cpa-usage-service:latest`.
+
+### Docker Compose
+
+```yaml
+services:
+  cpa-usage-service:
+    image: seakee/cpa-usage-service:latest
+    restart: unless-stopped
+    ports:
+      - "18317:18317"
+    volumes:
+      - cpa-usage-data:/data
+
+volumes:
+  cpa-usage-data:
+```
+
+Start:
+
+```bash
+docker compose up -d
+```
+
+### Linux Host CPA
+
+If CPA runs directly on a Linux host and Usage Service runs in Docker, add a host gateway:
+
+```bash
+docker run -d \
+  --name cpa-usage-service \
+  --restart unless-stopped \
+  --add-host=host.docker.internal:host-gateway \
+  -p 18317:18317 \
+  -v cpa-usage-data:/data \
+  seakee/cpa-usage-service:latest
+```
+
+Then enter `http://host.docker.internal:8317` as the CPA URL.
+
+## Quick Start: CPA Panel Mode
+
+1. Start CPA as usual and open:
+
+   ```text
+   http://<cpa-host>:8317/management.html
+   ```
+
+2. Deploy Usage Service:
+
+   ```bash
+   docker run -d \
+     --name cpa-usage-service \
+     --restart unless-stopped \
+     -p 18317:18317 \
+     -v cpa-usage-data:/data \
+     seakee/cpa-usage-service:latest
+   ```
+
+3. In the CPA panel, go to:
+
+   ```text
+   System -> External Usage Service
+   ```
+
+4. Enable it and enter:
+
+   ```text
+   http://<usage-service-host>:18317
+   ```
+
+5. Click **Save and connect**.
+
+The panel sends the current CPA URL and Management Key to Usage Service. After that, monitoring reads usage data from Usage Service while other management calls continue to use CPA.
+
+## Build Locally
+
+```bash
+docker compose -f docker-compose.usage.yml up --build
+```
+
+This builds the React panel and embeds it into the Go Usage Service binary.
+
+## Usage Service Configuration
+
+Most users can configure CPA URL and Management Key from the panel. Environment variables are useful for automated deployments.
+
+| Variable | Default | Description |
+|---|---:|---|
+| `HTTP_ADDR` | `0.0.0.0:18317` | Usage Service HTTP listen address |
+| `USAGE_DB_PATH` | `/data/usage.sqlite` | SQLite database path |
+| `USAGE_DATA_DIR` | `/data` | Base data directory when `USAGE_DB_PATH` is not overridden |
+| `CPA_UPSTREAM_URL` | empty | Optional CPA base URL for unattended startup |
+| `CPA_MANAGEMENT_KEY` | empty | Optional CPA Management Key for unattended startup |
+| `CPA_MANAGEMENT_KEY_FILE` | `/run/secrets/cpa_management_key` | Optional file containing the Management Key |
+| `USAGE_RESP_QUEUE` | `usage` | RESP key argument; CPA currently ignores it, leave the default unless upstream changes |
+| `USAGE_RESP_POP_SIDE` | `right` | `right` uses `RPOP`; `left` uses `LPOP` |
+| `USAGE_BATCH_SIZE` | `100` | Maximum queue records per pop |
+| `USAGE_POLL_INTERVAL_MS` | `500` | Idle polling interval |
+| `USAGE_QUERY_LIMIT` | `50000` | Maximum recent events returned through compatible `/usage` |
+| `USAGE_CORS_ORIGINS` | `*` | Allowed browser origins for CPA panel mode |
+| `USAGE_RESP_TLS_SKIP_VERIFY` | `false` | Skip TLS verification for RESP connection |
+| `PANEL_PATH` | empty | Serve a custom `management.html` instead of the embedded one |
+
+If `CPA_UPSTREAM_URL` and `CPA_MANAGEMENT_KEY` are set, collection starts automatically on boot. Otherwise, use the web panel setup flow.
+
+## Data and Security Notes
+
+- SQLite data is stored under `/data`; mount it to persistent storage.
+- In full Docker mode, CPA URL and Management Key are stored in the SQLite `settings` table so collection can resume after restart.
+- Protect the `/data` volume. It contains usage metadata and the saved Management Key.
+- Usage Service redacts key-like fields before storing raw JSON payload snapshots, but request metadata may still expose models, endpoints, account labels, and token usage.
+- RESP queue consumption is pop-based. Do not run multiple Usage Service consumers against the same CPA instance.
+- If Usage Service is down longer than CPA's queue retention window, that period's usage cannot be recovered without CPA-side persistence.
+
+## Runtime Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Basic health check |
+| `GET /status` | Collector, SQLite, event count, and error status |
+| `GET /usage-service/info` | Allows the frontend to detect full Docker mode |
+| `POST /setup` | Save CPA URL + Management Key and start collection |
+| `GET /v0/management/usage` | Compatible usage payload for the panel |
+| `GET /v0/management/usage/export` | Export usage events as JSONL |
+| `POST /v0/management/usage/import` | Import JSONL usage events |
+| `/v0/management/*` | Proxied to CPA except usage endpoints |
+
+Usage and proxy endpoints require the same Management Key as a Bearer token after setup.
+
+## Feature Overview
+
+- **Dashboard**: connection state, backend version, quick health summary
+- **Configuration**: visual and source editing for CPA configuration
+- **AI Providers**: Gemini, Codex, Claude, Vertex, OpenAI-compatible providers, and Ampcode
+- **Auth Files**: upload, download, delete, status, OAuth exclusions, model aliases
+- **Quota**: quota views for supported providers
+- **Request Monitoring**: persisted usage KPIs, model/channel/account breakdowns, failure analysis, realtime tables
+- **Codex Account Inspection**: batch probing and cleanup suggestions for Codex auth pools
+- **Logs**: incremental file log reading and filtering
+- **System**: model list, version checks, local state tools, external Usage Service configuration
 
 ## Screenshots
-
-Monitoring and inspection UI added on this branch:
 
 ![Feature screenshot 1](img/image.png)
 ![Feature screenshot 2](img/image_1.png)
 ![Feature screenshot 3](img/image_2.png)
 
-## Quick start
+## Development
 
-### Option A: Use the bundled Web UI in CLI Proxy API
-
-1. Start your CLI Proxy API service.
-2. Open `http://<host>:<api_port>/management.html`.
-3. Enter your **management key** and connect.
-
-The UI auto-detects the API address from the current page URL and also allows manual override.
-
-### Option B: Run the dev server
+Frontend:
 
 ```bash
 npm install
 npm run dev
-```
-
-Then open `http://localhost:5173` and connect it to your CLI Proxy API backend.
-
-### Option C: Build a single HTML file
-
-```bash
-npm install
+npm run type-check
+npm run lint
 npm run build
 ```
 
-- Output: `dist/index.html`
-- Assets are inlined into a single file
-- Release packaging can rename it to `management.html`
-- Local preview: `npm run preview`
+Usage Service:
 
-Tip: opening `dist/index.html` with `file://` may run into browser CORS restrictions. Serving it through a local HTTP server is more reliable.
+```bash
+cd usage-service
+go test ./...
+go run ./cmd/cpa-usage-service
+```
 
-## Connecting to the server
+## Build and Release
 
-### API address
-
-The UI normalizes any of the following inputs:
-
-- `localhost:8317`
-- `http://192.168.1.10:8317`
-- `https://example.com:8317`
-- `http://example.com:8317/v0/management`
-
-### Management key
-
-The management key is sent with requests as:
-
-- `Authorization: Bearer <MANAGEMENT_KEY>`
-
-This is different from the proxy `api-keys` managed in the UI. Those keys are for clients calling the proxy endpoints.
-
-### Remote management
-
-If you connect from a non-localhost browser, the server must allow remote management, for example:
-
-- `allow-remote-management: true`
-
-Authentication rules, rate limits, and remote-access blocking are enforced server-side.
-
-## Feature overview
-
-- **Dashboard**
-  - Connection status, backend version, build date, and quick health summary
-- **Configuration**
-  - Core config switches such as debug mode, proxy URL, retries, quota fallback, usage statistics, request logging, file logging, WebSocket auth, and in-browser `/config.yaml` editing
-- **AI Providers**
-  - Gemini, Codex, Claude, Vertex, OpenAI-compatible providers, and Ampcode integration
-- **Auth Files**
-  - Upload, download, delete, search, pagination, runtime-only indicators, enable and disable workflows, OAuth excluded models, and OAuth model alias mappings
-- **OAuth**
-  - OAuth and device-code flows for supported providers, plus iFlow cookie import
-- **Quota**
-  - Quota views and management for Claude, Antigravity, Codex, Gemini CLI, and other providers
-- **Request Monitoring**
-  - Runtime KPIs, trend charts, token mix, model and channel rankings, failure spotlight, account overview, live filters, and realtime monitor tables
-- **Codex Account Inspection**
-  - Operational inspection and cleanup workflow for Codex auth pools
-- **Usage**
-  - Usage charts, API and model breakdowns, cached/reasoning token views, exports/imports, and local model pricing for cost estimation
-- **Logs**
-  - Incremental log tailing, auto refresh, search, hiding management traffic, clearing logs, and request error-log download
-- **System**
-  - Quick links, local state utilities, and grouped `/v1/models` browsing
-
-## Operational notes
-
-- Request Monitoring depends on `/usage` data. If usage statistics are disabled on the backend, the page can only show limited connection and config state.
-- The Logs navigation item appears only when file logging is enabled.
-- Some auth-file features depend on backend support, especially model-list, excluded-model, and status-shape variations.
-- Codex Account Inspection can mutate auth files by deleting, disabling, or enabling entries. Review suggested actions before executing them.
-
-## Tech stack
-
-- React 19 + TypeScript 5.9
-- Vite 7 with single-file output
-- Zustand
-- Axios
-- react-router-dom v7
-- Chart.js
-- CodeMirror 6
-- SCSS Modules
-- i18next
-
-## Internationalization
-
-Currently supports four languages:
-
-- English (`en`)
-- Simplified Chinese (`zh-CN`)
-- Traditional Chinese (`zh-TW`)
-- Russian (`ru`)
-
-The UI language is auto-detected from the browser and can also be switched manually in the UI.
-
-## Browser compatibility
-
-- Build target: `ES2020`
-- Supports modern Chrome, Firefox, Safari, and Edge
-- Responsive layout for desktop, tablet, and mobile access
-
-## Build and release notes
-
-- Vite produces a single inlined HTML file at `dist/index.html`
-- `vite-plugin-singlefile` is used to inline assets
-- Tagging `vX.Y.Z` triggers `.github/workflows/release.yml` to publish `dist/management.html`
-- The UI version shown in the footer is injected at build time from `VERSION`, git tags, or `package.json`
-
-## Security notes
-
-- The management key is stored in browser `localStorage` using a lightweight obfuscation format (`enc::v1::...`), but it should still be treated as sensitive.
-- Request Monitoring and inspection pages may surface account labels, endpoints, models, and usage data. Use the UI only on trusted devices and browser profiles.
-- Be cautious when enabling remote management or executing destructive auth-file actions.
+- Vite builds a single-file `dist/index.html`.
+- Tagging `vX.Y.Z` triggers `.github/workflows/release.yml`.
+- The release workflow uploads `dist/management.html` to GitHub Releases.
+- The same workflow builds `Dockerfile.usage-service` and pushes to DockerHub.
+- Required GitHub secrets:
+  - `DOCKERHUB_USERNAME`
+  - `DOCKERHUB_TOKEN`
+- Optional GitHub variable:
+  - `DOCKERHUB_IMAGE`, for example `your-org/cpa-usage-service`
+- Without `DOCKERHUB_IMAGE`, the default image is `<DOCKERHUB_USERNAME>/cpa-usage-service`.
 
 ## Troubleshooting
 
-- **Cannot connect / 401**: verify the API address and management key. Remote access may also require enabling remote management server-side.
-- **Monitoring page looks empty**: enable usage statistics in the backend config. Without `/usage`, runtime analytics stay limited.
-- **Codex inspection results are incomplete**: verify that the target auth files expose usable `auth_index` metadata and that the backend accepts management-side probe requests.
-- **Logs page is missing**: enable file logging in configuration first.
-- **Some features show unsupported behavior**: the backend may be older, the endpoint may be absent, or metadata may be returned in a different shape.
-- **OpenAI provider browser test fails**: that test runs in the browser and is affected by network and CORS. Failure there does not always mean the backend cannot reach the provider.
+- **Cannot connect in full Docker mode**: verify the CPA URL from inside the Usage Service container. For host CPA on Linux, use `--add-host=host.docker.internal:host-gateway`.
+- **Monitoring is empty**: enable CPA usage statistics, verify Usage Service `/status`, and confirm only one consumer is running.
+- **401 from Usage Service**: use the same Management Key that was saved during setup.
+- **Docker panel shows stale data**: check `/status` for `lastConsumedAt`, `lastInsertedAt`, and `lastError`.
+- **CPA panel mode has CORS errors**: set `USAGE_CORS_ORIGINS` to the CPA panel origin or keep the default `*` for private deployments.
+- **Data disappears after container rebuild**: mount `/data` to a Docker volume or host directory.
 
-## Development
+## References
 
-```bash
-npm run dev        # Vite dev server
-npm run build      # tsc + Vite build
-npm run preview    # Preview dist locally
-npm run lint       # ESLint
-npm run format     # Prettier for src/*
-npm run type-check # tsc --noEmit
-```
+- CLIProxyAPI: https://github.com/router-for-me/CLIProxyAPI
+- Redis usage queue documentation: https://help.router-for.me/management/redis-usage-queue.html
 
-## Contributing
+## Acknowledgements
 
-Issues and PRs are welcome. Include:
-
-- Reproduction steps
-- Backend version and UI version
-- Screenshots for UI changes
-- Verification notes such as `npm run lint` and `npm run type-check`
+- Thanks to the [Linux.do](https://linux.do/) community for project promotion and feedback.
 
 ## Thanks
 
