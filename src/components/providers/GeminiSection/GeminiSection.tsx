@@ -6,23 +6,21 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import iconGemini from '@/assets/icons/gemini.svg';
 import type { GeminiKeyConfig } from '@/types';
 import { maskApiKey } from '@/utils/format';
-import { calculateStatusBarData, type KeyStats } from '@/utils/usage';
-import { type UsageDetailsByAuthIndex, type UsageDetailsBySource } from '@/utils/usageIndex';
+import { statusBarDataFromRecentRequests } from '@/utils/recentRequests';
 import styles from '@/pages/AiProvidersPage.module.scss';
 import { ProviderList } from '../ProviderList';
 import { ProviderStatusBar } from '../ProviderStatusBar';
 import {
-  collectUsageDetailsForIdentity,
   getProviderConfigKey,
-  getStatsForIdentity,
+  getProviderRecentBuckets,
+  getProviderTotalStats,
   hasDisableAllModelsRule,
+  type ProviderRecentUsageMap,
 } from '../utils';
 
 interface GeminiSectionProps {
   configs: GeminiKeyConfig[];
-  keyStats: KeyStats;
-  usageDetailsBySource: UsageDetailsBySource;
-  usageDetailsByAuthIndex: UsageDetailsByAuthIndex;
+  usageByProvider: ProviderRecentUsageMap;
   loading: boolean;
   disableControls: boolean;
   isSwitching: boolean;
@@ -34,9 +32,7 @@ interface GeminiSectionProps {
 
 export function GeminiSection({
   configs,
-  keyStats,
-  usageDetailsBySource,
-  usageDetailsByAuthIndex,
+  usageByProvider,
   loading,
   disableControls,
   isSwitching,
@@ -50,25 +46,21 @@ export function GeminiSection({
   const toggleDisabled = disableControls || loading || isSwitching;
 
   const statusBarCache = useMemo(() => {
-    const cache = new Map<string, ReturnType<typeof calculateStatusBarData>>();
+    const cache = new Map<string, ReturnType<typeof statusBarDataFromRecentRequests>>();
 
     configs.forEach((config, index) => {
       if (!config.apiKey) return;
       const configKey = getProviderConfigKey(config, index);
       cache.set(
         configKey,
-        calculateStatusBarData(
-          collectUsageDetailsForIdentity(
-            { authIndex: config.authIndex, apiKey: config.apiKey, prefix: config.prefix },
-            usageDetailsBySource,
-            usageDetailsByAuthIndex
-          )
+        statusBarDataFromRecentRequests(
+          getProviderRecentBuckets(usageByProvider, 'gemini', config.apiKey, config.baseUrl)
         )
       );
     });
 
     return cache;
-  }, [configs, usageDetailsByAuthIndex, usageDetailsBySource]);
+  }, [configs, usageByProvider]);
 
   return (
     <>
@@ -104,15 +96,18 @@ export function GeminiSection({
             />
           )}
           renderContent={(item, index) => {
-            const stats = getStatsForIdentity(
-              { authIndex: item.authIndex, apiKey: item.apiKey, prefix: item.prefix },
-              keyStats
+            const stats = getProviderTotalStats(
+              usageByProvider,
+              'gemini',
+              item.apiKey,
+              item.baseUrl
             );
             const headerEntries = Object.entries(item.headers || {});
             const configDisabled = hasDisableAllModelsRule(item.excludedModels);
             const excludedModels = item.excludedModels ?? [];
             const statusData =
-              statusBarCache.get(getProviderConfigKey(item, index)) || calculateStatusBarData([]);
+              statusBarCache.get(getProviderConfigKey(item, index)) ||
+              statusBarDataFromRecentRequests([]);
 
             return (
               <Fragment>

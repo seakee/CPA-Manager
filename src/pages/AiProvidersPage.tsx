@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -9,7 +9,7 @@ import {
   OpenAISection,
   VertexSection,
   ProviderNav,
-  useProviderStats,
+  useProviderRecentRequests,
 } from '@/components/providers';
 import {
   withDisableAllModelsRule,
@@ -20,7 +20,6 @@ import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { ampcodeApi, providersApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore, useThemeStore } from '@/stores';
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
-import { indexUsageDetailsByAuthIndex, indexUsageDetailsBySource } from '@/utils/usageIndex';
 import styles from './AiProvidersPage.module.scss';
 
 export function AiProvidersPage() {
@@ -64,17 +63,9 @@ export function AiProvidersPage() {
   const pageTransitionLayer = usePageTransitionLayer();
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
 
-  const { keyStats, usageDetails, loadKeyStats, refreshKeyStats } = useProviderStats({
+  const { usageByProvider, loadRecentRequests, refreshRecentRequests } = useProviderRecentRequests({
     enabled: isCurrentLayer,
   });
-  const usageDetailsBySource = useMemo(
-    () => indexUsageDetailsBySource(usageDetails),
-    [usageDetails]
-  );
-  const usageDetailsByAuthIndex = useMemo(
-    () => indexUsageDetailsByAuthIndex(usageDetails),
-    [usageDetails]
-  );
 
   const getErrorMessage = (err: unknown) => {
     if (err instanceof Error) return err.message;
@@ -139,8 +130,8 @@ export function AiProvidersPage() {
 
   useEffect(() => {
     if (!isCurrentLayer) return;
-    void loadKeyStats().catch(() => {});
-  }, [isCurrentLayer, loadKeyStats]);
+    void loadRecentRequests().catch(() => {});
+  }, [isCurrentLayer, loadRecentRequests]);
 
   useEffect(() => {
     if (config?.geminiApiKeys) setGeminiKeys(config.geminiApiKeys);
@@ -156,7 +147,11 @@ export function AiProvidersPage() {
     config?.openaiCompatibility,
   ]);
 
-  useHeaderRefresh(refreshKeyStats, isCurrentLayer);
+  const handleRecentRequestsRefresh = useCallback(async () => {
+    await refreshRecentRequests();
+  }, [refreshRecentRequests]);
+
+  useHeaderRefresh(handleRecentRequestsRefresh, isCurrentLayer);
 
   const openEditor = useCallback(
     (path: string) => {
@@ -296,6 +291,38 @@ export function AiProvidersPage() {
     }
   };
 
+  const setOpenAIProviderEnabled = async (index: number, enabled: boolean) => {
+    const current = openaiProviders[index];
+    if (!current) return;
+
+    const switchingKey = `openai:${current.name}:${index}`;
+    setConfigSwitchingKey(switchingKey);
+
+    const previousList = openaiProviders;
+    const nextItem: OpenAIProviderConfig = { ...current, disabled: !enabled };
+    const nextList = previousList.map((item, idx) => (idx === index ? nextItem : item));
+
+    setOpenaiProviders(nextList);
+    updateConfigValue('openai-compatibility', nextList);
+    clearCache('openai-compatibility');
+
+    try {
+      await providersApi.updateOpenAIProviderDisabled(index, !enabled);
+      showNotification(
+        enabled ? t('notification.config_enabled') : t('notification.config_disabled'),
+        'success'
+      );
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      setOpenaiProviders(previousList);
+      updateConfigValue('openai-compatibility', previousList);
+      clearCache('openai-compatibility');
+      showNotification(`${t('notification.update_failed')}: ${message}`, 'error');
+    } finally {
+      setConfigSwitchingKey(null);
+    }
+  };
+
   const deleteProviderEntry = async (type: 'codex' | 'claude', index: number) => {
     const source = type === 'codex' ? codexConfigs : claudeConfigs;
     const entry = source[index];
@@ -387,9 +414,7 @@ export function AiProvidersPage() {
         <div id="provider-gemini">
           <GeminiSection
             configs={geminiKeys}
-            keyStats={keyStats}
-            usageDetailsBySource={usageDetailsBySource}
-            usageDetailsByAuthIndex={usageDetailsByAuthIndex}
+            usageByProvider={usageByProvider}
             loading={loading}
             disableControls={disableControls}
             isSwitching={isSwitching}
@@ -403,9 +428,7 @@ export function AiProvidersPage() {
         <div id="provider-codex">
           <CodexSection
             configs={codexConfigs}
-            keyStats={keyStats}
-            usageDetailsBySource={usageDetailsBySource}
-            usageDetailsByAuthIndex={usageDetailsByAuthIndex}
+            usageByProvider={usageByProvider}
             loading={loading}
             disableControls={disableControls}
             isSwitching={isSwitching}
@@ -419,9 +442,7 @@ export function AiProvidersPage() {
         <div id="provider-claude">
           <ClaudeSection
             configs={claudeConfigs}
-            keyStats={keyStats}
-            usageDetailsBySource={usageDetailsBySource}
-            usageDetailsByAuthIndex={usageDetailsByAuthIndex}
+            usageByProvider={usageByProvider}
             loading={loading}
             disableControls={disableControls}
             isSwitching={isSwitching}
@@ -435,9 +456,7 @@ export function AiProvidersPage() {
         <div id="provider-vertex">
           <VertexSection
             configs={vertexConfigs}
-            keyStats={keyStats}
-            usageDetailsBySource={usageDetailsBySource}
-            usageDetailsByAuthIndex={usageDetailsByAuthIndex}
+            usageByProvider={usageByProvider}
             loading={loading}
             disableControls={disableControls}
             isSwitching={isSwitching}
@@ -461,9 +480,7 @@ export function AiProvidersPage() {
         <div id="provider-openai">
           <OpenAISection
             configs={openaiProviders}
-            keyStats={keyStats}
-            usageDetailsBySource={usageDetailsBySource}
-            usageDetailsByAuthIndex={usageDetailsByAuthIndex}
+            usageByProvider={usageByProvider}
             loading={loading}
             disableControls={disableControls}
             isSwitching={isSwitching}
@@ -471,6 +488,7 @@ export function AiProvidersPage() {
             onAdd={() => openEditor('/ai-providers/openai/new')}
             onEdit={(index) => openEditor(`/ai-providers/openai/${index}`)}
             onDelete={deleteOpenai}
+            onToggle={(index, enabled) => void setOpenAIProviderEnabled(index, enabled)}
           />
         </div>
       </div>

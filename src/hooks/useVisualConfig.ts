@@ -92,6 +92,18 @@ function setBooleanInDoc(doc: YamlDocument, path: YamlPath, value: boolean): voi
   if (docHas(doc, path)) doc.setIn(path, false);
 }
 
+function shouldWriteManagedField(
+  doc: YamlDocument,
+  path: YamlPath,
+  dirtyFields: Set<string>,
+  dirtyKey: string
+): boolean {
+  // Optional fields managed by the visual editor must not be created during unrelated saves.
+  // Only materialize them when the YAML already had the key or the user changed that field.
+  // Use this guard for future optional visual-editor fields instead of unconditional `setIn`.
+  return docHas(doc, path) || dirtyFields.has(dirtyKey);
+}
+
 function setStringInDoc(doc: YamlDocument, path: YamlPath, value: unknown): void {
   const safe = typeof value === 'string' ? value : '';
   const trimmed = safe.trim();
@@ -602,12 +614,6 @@ function getNextDirtyFields(
       nextValues.logsMaxTotalSizeMb === baselineValues.logsMaxTotalSizeMb
     );
   }
-  if (Object.prototype.hasOwnProperty.call(patch, 'usageStatisticsEnabled')) {
-    updateDirty(
-      'usageStatisticsEnabled',
-      nextValues.usageStatisticsEnabled === baselineValues.usageStatisticsEnabled
-    );
-  }
   if (Object.prototype.hasOwnProperty.call(patch, 'proxyUrl')) {
     updateDirty('proxyUrl', nextValues.proxyUrl === baselineValues.proxyUrl);
   }
@@ -770,8 +776,8 @@ export function useVisualConfig() {
     undefined,
     createInitialVisualConfigState
   );
-  const { visualValues, visualParseError } = state;
-  const visualDirty = state.dirtyFields.size > 0;
+  const { visualValues, visualParseError, dirtyFields } = state;
+  const visualDirty = dirtyFields.size > 0;
   const visualValidationErrors = useMemo(
     () => getVisualConfigValidationErrors(visualValues),
     [visualValues]
@@ -834,7 +840,6 @@ export function useVisualConfig() {
         commercialMode: Boolean(parsed['commercial-mode']),
         loggingToFile: Boolean(parsed['logging-to-file']),
         logsMaxTotalSizeMb: String(parsed['logs-max-total-size-mb'] ?? ''),
-        usageStatisticsEnabled: Boolean(parsed['usage-statistics-enabled']),
 
         proxyUrl: typeof parsed['proxy-url'] === 'string' ? parsed['proxy-url'] : '',
         forceModelPrefix: Boolean(parsed['force-model-prefix']),
@@ -845,7 +850,7 @@ export function useVisualConfig() {
 
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? true),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? true),
-        quotaAntigravityCredits: Boolean(quotaExceeded?.['antigravity-credits'] ?? true),
+        quotaAntigravityCredits: Boolean(quotaExceeded?.['antigravity-credits'] ?? false),
 
         routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
         routingSessionAffinity: Boolean(
@@ -949,7 +954,6 @@ export function useVisualConfig() {
         setBooleanInDoc(doc, ['commercial-mode'], values.commercialMode);
         setBooleanInDoc(doc, ['logging-to-file'], values.loggingToFile);
         setIntFromStringInDoc(doc, ['logs-max-total-size-mb'], values.logsMaxTotalSizeMb);
-        setBooleanInDoc(doc, ['usage-statistics-enabled'], values.usageStatisticsEnabled);
 
         setStringInDoc(doc, ['proxy-url'], values.proxyUrl);
         setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);
@@ -962,15 +966,28 @@ export function useVisualConfig() {
           docHas(doc, ['quota-exceeded']) ||
           !values.quotaSwitchProject ||
           !values.quotaSwitchPreviewModel ||
-          !values.quotaAntigravityCredits
+          shouldWriteManagedField(
+            doc,
+            ['quota-exceeded', 'antigravity-credits'],
+            dirtyFields,
+            'quotaAntigravityCredits'
+          )
         ) {
           ensureMapInDoc(doc, ['quota-exceeded']);
+          const writeQuotaAntigravityCredits = shouldWriteManagedField(
+            doc,
+            ['quota-exceeded', 'antigravity-credits'],
+            dirtyFields,
+            'quotaAntigravityCredits'
+          );
           doc.setIn(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
           doc.setIn(['quota-exceeded', 'switch-preview-model'], values.quotaSwitchPreviewModel);
-          doc.setIn(
-            ['quota-exceeded', 'antigravity-credits'],
-            values.quotaAntigravityCredits
-          );
+          if (writeQuotaAntigravityCredits) {
+            doc.setIn(
+              ['quota-exceeded', 'antigravity-credits'],
+              values.quotaAntigravityCredits
+            );
+          }
           deleteIfMapEmpty(doc, ['quota-exceeded']);
         }
 
@@ -1072,7 +1089,7 @@ export function useVisualConfig() {
         return currentYaml;
       }
     },
-    [visualValues]
+    [dirtyFields, visualValues]
   );
 
   const setVisualValues = useCallback((newValues: Partial<VisualConfigValues>) => {

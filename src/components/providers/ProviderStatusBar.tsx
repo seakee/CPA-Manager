@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { StatusBarData, StatusBlockDetail } from '@/utils/usage';
+import type { StatusBarData, StatusBlockDetail } from '@/utils/recentRequests';
 import defaultStyles from '@/pages/AiProvidersPage.module.scss';
 
 /**

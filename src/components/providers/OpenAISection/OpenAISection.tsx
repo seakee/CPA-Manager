@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { Select } from '@/components/ui/Select';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconCheck,
   IconChevronDown,
@@ -17,16 +18,17 @@ import iconOpenaiLight from '@/assets/icons/openai-light.svg';
 import iconOpenaiDark from '@/assets/icons/openai-dark.svg';
 import type { OpenAIProviderConfig } from '@/types';
 import { maskApiKey } from '@/utils/format';
-import { calculateStatusBarData, type KeyStats } from '@/utils/usage';
-import { type UsageDetailsByAuthIndex, type UsageDetailsBySource } from '@/utils/usageIndex';
+import { statusBarDataFromRecentRequests } from '@/utils/recentRequests';
 import styles from '@/pages/AiProvidersPage.module.scss';
 import { ProviderStatusBar } from '../ProviderStatusBar';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import {
-  collectOpenAIProviderUsageDetails,
+  getOpenAIProviderRecentWindowStats,
+  getOpenAIProviderRecentStatusData,
+  getOpenAIProviderTotalStats,
   getOpenAIProviderKey,
-  getOpenAIProviderStats,
-  getStatsForIdentity,
+  getProviderTotalStats,
+  type ProviderRecentUsageMap,
 } from '../utils';
 
 type SortOption = 'name' | 'priority' | 'recent-success';
@@ -39,13 +41,11 @@ interface FloatingToolbarStyle {
   visible: boolean;
 }
 
-const EMPTY_STATUS_BAR = calculateStatusBarData([]);
+const EMPTY_STATUS_BAR = statusBarDataFromRecentRequests([]);
 
 interface OpenAISectionProps {
   configs: OpenAIProviderConfig[];
-  keyStats: KeyStats;
-  usageDetailsBySource: UsageDetailsBySource;
-  usageDetailsByAuthIndex: UsageDetailsByAuthIndex;
+  usageByProvider: ProviderRecentUsageMap;
   loading: boolean;
   disableControls: boolean;
   isSwitching: boolean;
@@ -53,6 +53,7 @@ interface OpenAISectionProps {
   onAdd: () => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
+  onToggle: (index: number, enabled: boolean) => void;
 }
 
 interface IndexedOpenAIProvider {
@@ -70,9 +71,7 @@ const getApiKeyEntryRenderKey = (
 
 export function OpenAISection({
   configs,
-  keyStats,
-  usageDetailsBySource,
-  usageDetailsByAuthIndex,
+  usageByProvider,
   loading,
   disableControls,
   isSwitching,
@@ -80,11 +79,13 @@ export function OpenAISection({
   onAdd,
   onEdit,
   onDelete,
+  onToggle,
 }: OpenAISectionProps) {
   const { t } = useTranslation();
   const pageTransitionLayer = usePageTransitionLayer();
   const isTransitionAnimating = pageTransitionLayer?.isAnimating ?? false;
   const actionsDisabled = disableControls || loading || isSwitching;
+  const toggleDisabled = disableControls || loading || isSwitching;
   const [sortOption, setSortOption] = useState<SortOption>('priority');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
@@ -249,20 +250,15 @@ export function OpenAISection({
     : t('ai_providers.model_search_placeholder');
 
   const statusBarCache = useMemo(() => {
-    const cache = new Map<string, ReturnType<typeof calculateStatusBarData>>();
+    const cache = new Map<string, ReturnType<typeof statusBarDataFromRecentRequests>>();
 
     configs.forEach((provider, index) => {
       const providerKey = getOpenAIProviderKey(provider, index);
-      cache.set(
-        providerKey,
-        calculateStatusBarData(
-          collectOpenAIProviderUsageDetails(provider, usageDetailsBySource, usageDetailsByAuthIndex)
-        )
-      );
+      cache.set(providerKey, getOpenAIProviderRecentStatusData(provider, usageByProvider));
     });
 
     return cache;
-  }, [configs, usageDetailsByAuthIndex, usageDetailsBySource]);
+  }, [configs, usageByProvider]);
 
   const sortOptions = useMemo(
     () => [
@@ -284,7 +280,12 @@ export function OpenAISection({
     const direction = sortDirection === 'desc' ? -1 : 1;
     const providerStats =
       sortOption === 'recent-success'
-        ? new Map(sorted.map(({ config }) => [config, getOpenAIProviderStats(config, keyStats)]))
+        ? new Map(
+            sorted.map(({ config }) => [
+              config,
+              getOpenAIProviderRecentWindowStats(config, usageByProvider),
+            ])
+          )
         : null;
 
     switch (sortOption) {
@@ -322,7 +323,7 @@ export function OpenAISection({
     }
 
     return sorted;
-  }, [configs, sortOption, sortDirection, keyStats, selectedModels]);
+  }, [configs, sortOption, sortDirection, usageByProvider, selectedModels]);
 
   const toggleModelSelection = (modelName: string) => {
     setSelectedModels((prev) => {
@@ -524,11 +525,12 @@ export function OpenAISection({
   );
 
   const renderProviderCard = ({ config: provider, originalIndex }: IndexedOpenAIProvider) => {
-    const stats = getOpenAIProviderStats(provider, keyStats);
+    const stats = getOpenAIProviderTotalStats(provider, usageByProvider);
     const headerEntries = Object.entries(provider.headers || {});
     const apiKeyEntries = provider.apiKeyEntries || [];
     const statusData =
       statusBarCache.get(getOpenAIProviderKey(provider, originalIndex)) || EMPTY_STATUS_BAR;
+    const providerDisabled = provider.disabled === true;
 
     return (
       <div
@@ -554,6 +556,11 @@ export function OpenAISection({
             <span className={styles.fieldLabel}>{t('common.base_url')}:</span>
             <span className={styles.fieldValue}>{provider.baseUrl}</span>
           </div>
+          {providerDisabled && (
+            <div className="status-badge warning" style={{ marginTop: 8, marginBottom: 0 }}>
+              {t('ai_providers.config_disabled_badge')}
+            </div>
+          )}
           {headerEntries.length > 0 && (
             <div className={styles.headerBadgeList}>
               {headerEntries.map(([key, value]) => (
@@ -570,9 +577,11 @@ export function OpenAISection({
               </div>
               <div className={styles.apiKeyEntryList}>
                 {apiKeyEntries.map((entry, entryIndex) => {
-                  const entryStats = getStatsForIdentity(
-                    { authIndex: entry.authIndex, apiKey: entry.apiKey },
-                    keyStats
+                  const entryStats = getProviderTotalStats(
+                    usageByProvider,
+                    provider.name,
+                    entry.apiKey,
+                    provider.baseUrl
                   );
                   return (
                     <div
@@ -651,6 +660,12 @@ export function OpenAISection({
           >
             {t('common.delete')}
           </Button>
+          <ToggleSwitch
+            label={t('ai_providers.config_toggle_label')}
+            checked={!providerDisabled}
+            disabled={toggleDisabled}
+            onChange={(value) => void onToggle(originalIndex, value)}
+          />
         </div>
       </div>
     );
