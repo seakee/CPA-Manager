@@ -70,11 +70,14 @@ jobs:
       contents: read
 
     env:
-      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE || format('{0}/cpa-usage-service', secrets.DOCKERHUB_USERNAME) }}
+      DOCKERHUB_IMAGE: seakee/cpa-manager
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -90,8 +93,8 @@ jobs:
             echo "DOCKERHUB_TOKEN secret is required" >&2
             exit 1
           fi
-          if [ -z "${DOCKERHUB_IMAGE}" ] || [ "${DOCKERHUB_IMAGE}" = "/cpa-usage-service" ]; then
-            echo "Docker image name is invalid; set DOCKERHUB_IMAGE variable or DOCKERHUB_USERNAME secret" >&2
+          if [ "${DOCKERHUB_IMAGE}" != "seakee/cpa-manager" ]; then
+            echo "Docker image name must be seakee/cpa-manager" >&2
             exit 1
           fi
         env:
@@ -120,6 +123,16 @@ jobs:
         with:
           context: .
           file: Dockerfile.usage-service
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Update DockerHub overview
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_IMAGE }}
+          short-description: CLI Proxy API Management Center with Dockerized Usage Service
+          readme-filepath: ./README.md

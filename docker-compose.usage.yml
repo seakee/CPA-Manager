@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.usage-service
-    image: cpa-usage-service:latest
+    image: seakee/cpa-manager:latest
     restart: unless-stopped
     ports:
       - "18317:18317"
