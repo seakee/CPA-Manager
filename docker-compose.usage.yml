@@ -1,5 +1,5 @@
 services:
-  cpa-usage-service:
+  cpa-manager:
     build:
       context: .
       dockerfile: Dockerfile.usage-service
@@ -17,7 +17,7 @@ services:
       USAGE_QUERY_LIMIT: "50000"
       USAGE_CORS_ORIGINS: "*"
     volumes:
-      - cpa-usage-data:/data
+      - cpa-manager-data:/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18317/health"]
       interval: 10s
@@ -25,4 +25,4 @@ services:
       retries: 3
 
 volumes:
-  cpa-usage-data:
+  cpa-manager-data:
