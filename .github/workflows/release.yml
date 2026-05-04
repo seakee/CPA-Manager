@@ -127,6 +127,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
 
       - name: Update DockerHub overview
         uses: peter-evans/dockerhub-description@v4

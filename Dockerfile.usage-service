@@ -1,11 +1,10 @@
-# syntax=docker/dockerfile:1
-
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web-build
+ARG VERSION=dev
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN VERSION=$VERSION npm run build
 
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS service-build
 ARG TARGETOS
