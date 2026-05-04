@@ -12,6 +12,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,11 +34,23 @@ type Server struct {
 
 const serviceID = "cpa-manager"
 
+const modelPriceSyncSource = "litellm"
+
+var modelPriceSyncURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+
 type setupRequest struct {
 	CPAUpstreamURL string `json:"cpaBaseUrl"`
 	ManagementKey  string `json:"managementKey"`
 	Queue          string `json:"queue"`
 	PopSide        string `json:"popSide"`
+}
+
+type modelPricesRequest struct {
+	Prices map[string]store.ModelPrice `json:"prices"`
+}
+
+type modelPricesSyncRequest struct {
+	Models []string `json:"models"`
 }
 
 func New(cfg config.Config, store *store.Store, collector *collector.Manager) *Server {
@@ -64,6 +77,10 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		s.writeCORS(w, r)
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v0/management/model-prices") {
+		s.withCORS(s.handleModelPrices)(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/usage") {
@@ -181,6 +198,201 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		PopSide:        setup.PopSide,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upstream": setup.CPAUpstreamURL})
+}
+
+func (s *Server) handleModelPrices(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeIfConfigured(w, r) {
+		return
+	}
+
+	path := strings.TrimRight(r.URL.Path, "/")
+	switch {
+	case path == "/v0/management/model-prices" && r.Method == http.MethodGet:
+		prices, err := s.store.LoadModelPrices(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"prices": prices})
+	case path == "/v0/management/model-prices" && r.Method == http.MethodPut:
+		var req modelPricesRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if req.Prices == nil {
+			writeError(w, http.StatusBadRequest, errors.New("prices are required"))
+			return
+		}
+		if err := s.store.SaveModelPrices(r.Context(), req.Prices); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		prices, err := s.store.LoadModelPrices(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"prices": prices})
+	case path == "/v0/management/model-prices/sync" && r.Method == http.MethodPost:
+		var req modelPricesSyncRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		remotePrices, skipped, err := fetchLiteLLMModelPrices(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		selectedPrices := selectModelPrices(remotePrices, req.Models)
+		result, err := s.store.UpsertSyncedModelPrices(r.Context(), selectedPrices)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		prices, err := s.store.LoadModelPrices(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"source":   modelPriceSyncSource,
+			"imported": result.Imported,
+			"skipped":  result.Skipped + skipped,
+			"prices":   prices,
+		})
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func fetchLiteLLMModelPrices(ctx context.Context) (map[string]store.ModelPrice, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelPriceSyncURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, 0, errors.New("model price sync failed: " + res.Status)
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return nil, 0, err
+	}
+
+	prices := map[string]store.ModelPrice{}
+	skipped := 0
+	for model, raw := range payload {
+		if model == "" || model == "sample_spec" {
+			skipped++
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			skipped++
+			continue
+		}
+
+		prompt, hasPrompt := readFloat(entry, "input_cost_per_token")
+		completion, hasCompletion := readFloat(entry, "output_cost_per_token")
+		cache, hasCache := readFloat(entry, "cache_read_input_token_cost")
+		if !hasCache {
+			cache, hasCache = readFloat(entry, "cache_read_cost_per_token")
+		}
+		if !hasPrompt && !hasCompletion {
+			skipped++
+			continue
+		}
+		if !hasPrompt {
+			prompt = 0
+		}
+		if !hasCompletion {
+			completion = 0
+		}
+		if !hasCache {
+			cache = prompt
+		}
+
+		prices[model] = store.ModelPrice{
+			Prompt:        prompt * 1_000_000,
+			Completion:    completion * 1_000_000,
+			Cache:         cache * 1_000_000,
+			Source:        modelPriceSyncSource,
+			SourceModelID: model,
+			RawJSON:       string(raw),
+		}
+	}
+	return prices, skipped, nil
+}
+
+func selectModelPrices(prices map[string]store.ModelPrice, models []string) map[string]store.ModelPrice {
+	wanted := make([]string, 0, len(models))
+	seen := map[string]struct{}{}
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		wanted = append(wanted, model)
+	}
+	if len(wanted) == 0 {
+		return prices
+	}
+
+	selected := map[string]store.ModelPrice{}
+	for _, model := range wanted {
+		if price, ok := prices[model]; ok {
+			selected[model] = price
+			continue
+		}
+		if price, ok := findSuffixModelPrice(prices, model); ok {
+			selected[model] = price
+		}
+	}
+	return selected
+}
+
+func findSuffixModelPrice(prices map[string]store.ModelPrice, model string) (store.ModelPrice, bool) {
+	suffix := "/" + model
+	var match store.ModelPrice
+	matchedKey := ""
+	for key, price := range prices {
+		if !strings.HasSuffix(key, suffix) {
+			continue
+		}
+		if matchedKey == "" || len(key) < len(matchedKey) {
+			matchedKey = key
+			match = price
+		}
+	}
+	return match, matchedKey != ""
+}
+
+func readFloat(entry map[string]any, key string) (float64, bool) {
+	value, ok := entry[key]
+	if !ok || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +626,7 @@ func (s *Server) writeCORS(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 }
 

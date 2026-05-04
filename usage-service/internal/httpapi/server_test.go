@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -113,4 +116,116 @@ func TestModelListProxyRequiresSetup(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "usage service is not configured") {
 		t.Fatalf("response body = %s", rr.Body.String())
 	}
+}
+
+func TestModelPricesSaveAndLoad(t *testing.T) {
+	handler := newTestHandler(t, "http://example.test", true)
+	body := bytes.NewBufferString(`{"prices":{"gpt-test":{"prompt":1.25,"completion":2.5,"cache":0.1}}}`)
+	req := httptest.NewRequest(http.MethodPut, "/v0/management/model-prices", body)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v0/management/model-prices", nil)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("load status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var response struct {
+		Prices map[string]struct {
+			Prompt     float64 `json:"prompt"`
+			Completion float64 `json:"completion"`
+			Cache      float64 `json:"cache"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	price, ok := response.Prices["gpt-test"]
+	if !ok {
+		t.Fatalf("missing saved price: %#v", response.Prices)
+	}
+	if price.Prompt != 1.25 || price.Completion != 2.5 || price.Cache != 0.1 {
+		t.Fatalf("price = %#v", price)
+	}
+}
+
+func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"sample_spec": {},
+			"gpt-test": {
+				"input_cost_per_token": 0.00000125,
+				"output_cost_per_token": 0.0000025,
+				"cache_read_input_token_cost": 0.0000001,
+				"mode": "chat"
+			},
+			"image-only": {
+				"output_cost_per_image": 0.04,
+				"mode": "image_generation"
+			}
+		}`))
+	}))
+	t.Cleanup(source.Close)
+	oldURL := modelPriceSyncURL
+	modelPriceSyncURL = source.URL
+	t.Cleanup(func() {
+		modelPriceSyncURL = oldURL
+	})
+
+	handler := newTestHandler(t, "http://example.test", true)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/model-prices/sync",
+		bytes.NewBufferString(`{"models":["gpt-test"]}`),
+	)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("sync status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var response struct {
+		Source   string `json:"source"`
+		Imported int    `json:"imported"`
+		Skipped  int    `json:"skipped"`
+		Prices   map[string]struct {
+			Prompt        float64 `json:"prompt"`
+			Completion    float64 `json:"completion"`
+			Cache         float64 `json:"cache"`
+			Source        string  `json:"source"`
+			SourceModelID string  `json:"sourceModelId"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Source != "litellm" || response.Imported != 1 || response.Skipped != 2 {
+		t.Fatalf("sync summary = %#v", response)
+	}
+	price, ok := response.Prices["gpt-test"]
+	if !ok {
+		t.Fatalf("missing synced price: %#v", response.Prices)
+	}
+	if !closeFloat(price.Prompt, 1.25) || !closeFloat(price.Completion, 2.5) || !closeFloat(price.Cache, 0.1) {
+		t.Fatalf("price = %#v", price)
+	}
+	if price.Source != "litellm" || price.SourceModelID != "gpt-test" {
+		t.Fatalf("source metadata = %#v", price)
+	}
+}
+
+func closeFloat(left float64, right float64) bool {
+	return math.Abs(left-right) < 0.0000001
 }

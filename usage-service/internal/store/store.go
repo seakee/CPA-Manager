@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,6 +25,22 @@ type Setup struct {
 
 type InsertResult struct {
 	Inserted int `json:"inserted"`
+	Skipped  int `json:"skipped"`
+}
+
+type ModelPrice struct {
+	Prompt        float64 `json:"prompt"`
+	Completion    float64 `json:"completion"`
+	Cache         float64 `json:"cache"`
+	Source        string  `json:"source,omitempty"`
+	SourceModelID string  `json:"sourceModelId,omitempty"`
+	RawJSON       string  `json:"rawJson,omitempty"`
+	UpdatedAtMS   int64   `json:"updatedAtMs,omitempty"`
+	SyncedAtMS    *int64  `json:"syncedAtMs,omitempty"`
+}
+
+type ModelPriceSyncResult struct {
+	Imported int `json:"imported"`
 	Skipped  int `json:"skipped"`
 }
 
@@ -103,6 +120,17 @@ func (s *Store) init() error {
 			value text not null,
 			updated_at_ms integer not null
 		)`,
+		`create table if not exists model_prices (
+			model text primary key,
+			prompt_per_1m real not null,
+			completion_per_1m real not null,
+			cache_per_1m real not null,
+			source text,
+			source_model_id text,
+			raw_json text,
+			updated_at_ms integer not null,
+			synced_at_ms integer
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -145,6 +173,176 @@ func (s *Store) LoadSetup(ctx context.Context) (Setup, bool, error) {
 		return Setup{}, false, err
 	}
 	return setup, true, nil
+}
+
+func (s *Store) LoadModelPrices(ctx context.Context) (map[string]ModelPrice, error) {
+	rows, err := s.db.QueryContext(ctx, `select
+		model, prompt_per_1m, completion_per_1m, cache_per_1m, source, source_model_id, raw_json,
+		updated_at_ms, synced_at_ms
+		from model_prices order by model`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	prices := map[string]ModelPrice{}
+	for rows.Next() {
+		var model string
+		var price ModelPrice
+		var source, sourceModelID, rawJSON sql.NullString
+		var syncedAt sql.NullInt64
+		if err := rows.Scan(
+			&model,
+			&price.Prompt,
+			&price.Completion,
+			&price.Cache,
+			&source,
+			&sourceModelID,
+			&rawJSON,
+			&price.UpdatedAtMS,
+			&syncedAt,
+		); err != nil {
+			return nil, err
+		}
+		price.Source = source.String
+		price.SourceModelID = sourceModelID.String
+		price.RawJSON = rawJSON.String
+		if syncedAt.Valid {
+			value := syncedAt.Int64
+			price.SyncedAtMS = &value
+		}
+		prices[model] = price
+	}
+	return prices, rows.Err()
+}
+
+func (s *Store) SaveModelPrices(ctx context.Context, prices map[string]ModelPrice) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.ExecContext(ctx, `delete from model_prices`); err != nil {
+		return err
+	}
+	if len(prices) == 0 {
+		return tx.Commit()
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `insert into model_prices (
+		model, prompt_per_1m, completion_per_1m, cache_per_1m, source, source_model_id,
+		raw_json, updated_at_ms, synced_at_ms
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	now := time.Now().UnixMilli()
+	for model, price := range prices {
+		if err := validateModelPrice(model, price); err != nil {
+			return err
+		}
+		if _, err := stmt.ExecContext(
+			ctx,
+			model,
+			price.Prompt,
+			price.Completion,
+			price.Cache,
+			nullString(price.Source),
+			nullString(price.SourceModelID),
+			nullString(price.RawJSON),
+			now,
+			nullInt(price.SyncedAtMS),
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UpsertSyncedModelPrices(ctx context.Context, prices map[string]ModelPrice) (ModelPriceSyncResult, error) {
+	if len(prices) == 0 {
+		return ModelPriceSyncResult{}, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModelPriceSyncResult{}, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `insert into model_prices (
+		model, prompt_per_1m, completion_per_1m, cache_per_1m, source, source_model_id,
+		raw_json, updated_at_ms, synced_at_ms
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	on conflict(model) do update set
+		prompt_per_1m = excluded.prompt_per_1m,
+		completion_per_1m = excluded.completion_per_1m,
+		cache_per_1m = excluded.cache_per_1m,
+		source = excluded.source,
+		source_model_id = excluded.source_model_id,
+		raw_json = excluded.raw_json,
+		updated_at_ms = excluded.updated_at_ms,
+		synced_at_ms = excluded.synced_at_ms`)
+	if err != nil {
+		return ModelPriceSyncResult{}, err
+	}
+	defer stmt.Close()
+
+	now := time.Now().UnixMilli()
+	result := ModelPriceSyncResult{}
+	for model, price := range prices {
+		if err := validateModelPrice(model, price); err != nil {
+			result.Skipped++
+			continue
+		}
+		if price.Source == "" {
+			price.Source = "sync"
+		}
+		if price.SourceModelID == "" {
+			price.SourceModelID = model
+		}
+		price.UpdatedAtMS = now
+		price.SyncedAtMS = &now
+		if _, err := stmt.ExecContext(
+			ctx,
+			model,
+			price.Prompt,
+			price.Completion,
+			price.Cache,
+			nullString(price.Source),
+			nullString(price.SourceModelID),
+			nullString(price.RawJSON),
+			now,
+			now,
+		); err != nil {
+			return ModelPriceSyncResult{}, err
+		}
+		result.Imported++
+	}
+	if err := tx.Commit(); err != nil {
+		return ModelPriceSyncResult{}, err
+	}
+	return result, nil
+}
+
+func validateModelPrice(model string, price ModelPrice) error {
+	if model == "" {
+		return errors.New("model is required")
+	}
+	if !validPriceValue(price.Prompt) || !validPriceValue(price.Completion) || !validPriceValue(price.Cache) {
+		return fmt.Errorf("invalid model price for %s", model)
+	}
+	return nil
+}
+
+func validPriceValue(value float64) bool {
+	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertResult, error) {
