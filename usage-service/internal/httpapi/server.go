@@ -74,6 +74,10 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		s.withCORS(s.handleProxy)(w, r)
 		return
 	}
+	if isModelListProxyPath(r.URL.Path) {
+		s.withCORS(s.handleModelListProxy)(w, r)
+		return
+	}
 	if r.URL.Path == "/" {
 		http.Redirect(w, r, "/management.html", http.StatusTemporaryRedirect)
 		return
@@ -249,6 +253,44 @@ func (s *Server) handleUsageImport(w http.ResponseWriter, r *http.Request) {
 		"total":   len(events),
 		"failed":  failed,
 	})
+}
+
+func isModelListProxyPath(path string) bool {
+	cleaned := strings.TrimRight(path, "/")
+	return cleaned == "/v1/models" || cleaned == "/models"
+}
+
+func (s *Server) handleModelListProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	setup, ok, err := s.resolveSetup(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusPreconditionRequired, errors.New("usage service is not configured"))
+		return
+	}
+	target, err := url.Parse(setup.CPAUpstreamURL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.Host = target.Host
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		writeError(w, http.StatusBadGateway, err)
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
