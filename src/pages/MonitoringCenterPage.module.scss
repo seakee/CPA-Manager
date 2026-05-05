@@ -837,6 +837,21 @@
   white-space: nowrap;
 }
 
+.apiKeyTable {
+  min-width: 1180px;
+}
+
+.apiKeyHashCell {
+  min-width: 240px;
+}
+
+.apiKeyHashCell small {
+  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .realtimeTable {
   min-width: 1210px;
 }

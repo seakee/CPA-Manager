@@ -88,11 +88,12 @@ func (s *Store) init() error {
 			endpoint text,
 			method text,
 			path text,
-			auth_type text,
-			auth_index text,
-			source text,
-			source_hash text,
-			api_key_hash text,
+				auth_type text,
+				auth_index text,
+				source text,
+				source_hash text,
+				api_key text,
+				api_key_hash text,
 			input_tokens integer not null default 0,
 			output_tokens integer not null default 0,
 			reasoning_tokens integer not null default 0,
@@ -134,6 +135,39 @@ func (s *Store) init() error {
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	if err := s.ensureUsageEventsColumns(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureUsageEventsColumns() error {
+	rows, err := s.db.Query(`pragma table_info(usage_events)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if _, ok := columns["api_key"]; !ok {
+		if _, err := s.db.Exec(`alter table usage_events add column api_key text`); err != nil {
 			return err
 		}
 	}
@@ -358,11 +392,11 @@ func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertR
 	}()
 
 	stmt, err := tx.PrepareContext(ctx, `insert or ignore into usage_events (
-		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
-		auth_type, auth_index, source, source_hash, api_key_hash,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
+			auth_type, auth_index, source, source_hash, api_key, api_key_hash,
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+			latency_ms, failed, raw_json, created_at_ms
+		) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -389,6 +423,7 @@ func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertR
 			nullString(event.AuthIndex),
 			nullString(event.Source),
 			nullString(event.SourceHash),
+			nullString(event.APIKey),
 			nullString(event.APIKeyHash),
 			event.InputTokens,
 			event.OutputTokens,
@@ -433,9 +468,9 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 		limit = 50000
 	}
 	rows, err := s.db.QueryContext(ctx, `select
-		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
-		auth_type, auth_index, source, source_hash, api_key_hash,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+			request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
+			auth_type, auth_index, source, source_hash, api_key, api_key_hash,
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
 		latency_ms, failed, raw_json, created_at_ms
 		from usage_events
 		order by timestamp_ms desc, id desc
@@ -448,7 +483,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 	events := make([]usage.Event, 0)
 	for rows.Next() {
 		var event usage.Event
-		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
+		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKey, apiKeyHash, rawJSON sql.NullString
 		var latency sql.NullInt64
 		var failed int
 		if err := rows.Scan(
@@ -465,6 +500,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 			&authIndex,
 			&source,
 			&sourceHash,
+			&apiKey,
 			&apiKeyHash,
 			&event.InputTokens,
 			&event.OutputTokens,
@@ -488,6 +524,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 		event.AuthIndex = authIndex.String
 		event.Source = source.String
 		event.SourceHash = sourceHash.String
+		event.APIKey = apiKey.String
 		event.APIKeyHash = apiKeyHash.String
 		event.RawJSON = rawJSON.String
 		event.Failed = failed != 0

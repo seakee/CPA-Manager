@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/icons';
 import {
   buildAccountRows,
+  buildApiKeyRows,
   buildMonitoringSummary,
   buildRealtimeMonitorRows,
   useMonitoringData,
@@ -92,6 +93,7 @@ type FocusSnapshot = {
   selectedProvider: string;
   selectedModel: string;
   selectedChannel: string;
+  selectedApiKey: string;
   selectedStatus: StatusFilter;
 };
 
@@ -190,6 +192,14 @@ const createPriceDraft = (price?: ModelPrice): PriceDraft => ({
 const parsePriceValue = (value: string) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const sha256Hex = async (value: string) => {
+  const encoded = new TextEncoder().encode(value.trim());
+  const digest = await crypto.subtle.digest('SHA-256', encoded);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 };
 
 const formatPriceUnit = (value: number) => `$${value.toFixed(4)}/1M`;
@@ -850,6 +860,7 @@ export function MonitoringCenterPage() {
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [selectedChannel, setSelectedChannel] = useState('all');
+  const [selectedApiKey, setSelectedApiKey] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [focusedAccount, setFocusedAccount] = useState<string | null>(null);
@@ -859,6 +870,7 @@ export function MonitoringCenterPage() {
   const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>({});
   const [accountSort, setAccountSort] = useState<AccountSortState>(DEFAULT_ACCOUNT_SORT);
+  const [apiKeyHashMap, setApiKeyHashMap] = useState<Record<string, string>>({});
   const focusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
   const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
@@ -873,7 +885,32 @@ export function MonitoringCenterPage() {
     setModelPrices,
     syncModelPrices,
     loadUsage,
-  } = useUsageData();
+	  } = useUsageData();
+
+  useEffect(() => {
+    let cancelled = false;
+    const keys = Array.from(new Set((config?.apiKeys ?? []).map((key) => key.trim()).filter(Boolean)));
+    if (keys.length === 0 || !globalThis.crypto?.subtle) {
+      setApiKeyHashMap({});
+      return;
+    }
+
+    Promise.all(keys.map(async (key) => [await sha256Hex(key), key] as const))
+      .then((entries) => {
+        if (!cancelled) {
+          setApiKeyHashMap(Object.fromEntries(entries));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setApiKeyHashMap({});
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config?.apiKeys]);
 
   const {
     loading: monitoringLoading,
@@ -885,6 +922,7 @@ export function MonitoringCenterPage() {
     usage,
     config,
     modelPrices,
+    apiKeyHashMap,
     timeRange,
     searchQuery: deferredSearch,
   });
@@ -952,6 +990,22 @@ export function MonitoringCenterPage() {
     [filteredRows, t]
   );
 
+  const apiKeyOptions = useMemo(
+    () => [
+      { value: 'all', label: t('monitoring.filter_all_api_keys') },
+      ...Array.from(
+        new Map(
+          filteredRows
+            .map((row) => [row.apiKeyHash || row.apiKey, row.apiKey || row.apiKeyLabel] as const)
+            .filter(([value]) => value)
+        ).entries()
+      )
+        .sort((left, right) => left[1].localeCompare(right[1]))
+        .map(([value, label]) => ({ value, label })),
+    ],
+    [filteredRows, t]
+  );
+
   const statusOptions = useMemo(
     () => [
       { value: 'all', label: t('monitoring.filter_all_statuses') },
@@ -1002,6 +1056,9 @@ export function MonitoringCenterPage() {
         if (selectedChannel !== 'all' && row.channel !== selectedChannel) {
           return false;
         }
+        if (selectedApiKey !== 'all' && row.apiKeyHash !== selectedApiKey && row.apiKey !== selectedApiKey) {
+          return false;
+        }
         if (selectedStatus === 'success' && row.failed) {
           return false;
         }
@@ -1010,12 +1067,13 @@ export function MonitoringCenterPage() {
         }
         return true;
       }),
-    [filteredRows, selectedAccount, selectedChannel, selectedModel, selectedProvider, selectedStatus]
+    [filteredRows, selectedAccount, selectedApiKey, selectedChannel, selectedModel, selectedProvider, selectedStatus]
   );
   const scopedStatsRows = useMemo(() => scopedRows.filter((row) => row.statsIncluded), [scopedRows]);
 
   const scopedSummary = useMemo(() => buildMonitoringSummary(scopedStatsRows), [scopedStatsRows]);
   const accountRows = useMemo(() => buildAccountRows(scopedRows), [scopedRows]);
+  const apiKeyRows = useMemo(() => buildApiKeyRows(scopedStatsRows), [scopedStatsRows]);
   const sortedAccountRows = useMemo(() => {
     const directionFactor = accountSort.direction === 'desc' ? -1 : 1;
 
@@ -1070,7 +1128,7 @@ export function MonitoringCenterPage() {
   );
 
   const selectedFiltersCount =
-    [selectedAccount, selectedProvider, selectedModel, selectedChannel, selectedStatus].filter(
+    [selectedAccount, selectedProvider, selectedModel, selectedChannel, selectedApiKey, selectedStatus].filter(
       (value) => value !== 'all'
     ).length + (deferredSearch.trim() ? 1 : 0);
 
@@ -1095,7 +1153,7 @@ export function MonitoringCenterPage() {
     {
       label: t('monitoring.total_calls'),
       value: formatCompactNumber(scopedSummary.totalCalls),
-      meta: `${accountRows.length} ${t('monitoring.accounts_suffix')}`,
+      meta: `${accountRows.length} ${t('monitoring.accounts_suffix')} · ${apiKeyRows.length} ${t('monitoring.api_keys_suffix')}`,
     },
     {
       label: t('monitoring.success_calls'),
@@ -1163,6 +1221,7 @@ export function MonitoringCenterPage() {
     setSelectedProvider(snapshot.selectedProvider);
     setSelectedModel(snapshot.selectedModel);
     setSelectedChannel(snapshot.selectedChannel);
+    setSelectedApiKey(snapshot.selectedApiKey);
     setSelectedStatus(snapshot.selectedStatus);
   }, []);
 
@@ -1174,6 +1233,7 @@ export function MonitoringCenterPage() {
     setSelectedProvider('all');
     setSelectedModel('all');
     setSelectedChannel('all');
+    setSelectedApiKey('all');
     setSelectedStatus('all');
   }, []);
 
@@ -1273,6 +1333,7 @@ export function MonitoringCenterPage() {
           selectedProvider,
           selectedModel,
           selectedChannel,
+          selectedApiKey,
           selectedStatus,
         };
       }
@@ -1285,6 +1346,7 @@ export function MonitoringCenterPage() {
       restoreFocusSnapshot,
       searchInput,
       selectedAccount,
+      selectedApiKey,
       selectedChannel,
       selectedModel,
       selectedProvider,
@@ -1522,6 +1584,12 @@ export function MonitoringCenterPage() {
             ariaLabel={t('monitoring.filter_channel')}
           />
           <Select
+            value={selectedApiKey}
+            options={apiKeyOptions}
+            onChange={setSelectedApiKey}
+            ariaLabel={t('monitoring.filter_api_key')}
+          />
+          <Select
             value={selectedStatus}
             options={statusOptions}
             onChange={(value) => setSelectedStatus(value as StatusFilter)}
@@ -1686,6 +1754,79 @@ export function MonitoringCenterPage() {
               {sortedAccountRows.length === 0 ? (
                 <tr>
                   <td colSpan={accountOverviewColumns.length}>
+                    <div className={styles.emptyTable}>
+                      {deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        title={t('monitoring.api_key_overview_title')}
+        subtitle={t('monitoring.api_key_overview_desc')}
+        extra={<span className={styles.metaPill}>{`${t('monitoring.api_keys_suffix')}: ${apiKeyRows.length}`}</span>}
+      >
+        <div className={styles.tableWrapper}>
+          <table className={`${styles.table} ${styles.apiKeyTable}`}>
+            <thead>
+              <tr>
+                <th>{t('monitoring.api_key_label')}</th>
+                <th>{t('monitoring.total_calls')}</th>
+                <th>{t('monitoring.column_success_rate')}</th>
+                <th>{t('monitoring.failure_calls')}</th>
+                <th>{t('monitoring.total_tokens')}</th>
+                <th>{t('monitoring.input_tokens')}</th>
+                <th>{t('monitoring.output_tokens')}</th>
+                <th>{t('monitoring.cached_tokens')}</th>
+                <th>{t('monitoring.estimated_cost')}</th>
+                <th>{t('monitoring.latest_request_time')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiKeyRows.map((row) => (
+                <tr key={row.id}>
+                  <td className={styles.apiKeyHashCell}>
+                    <div className={styles.primaryCell}>
+                      <span className={styles.monoCell}>
+                        {row.apiKey || row.apiKeyLabel || t('monitoring.api_key_unknown')}
+                      </span>
+                      {!row.apiKey ? (
+                        <small className={styles.monoCell}>
+                          {row.apiKeyHash || t('monitoring.api_key_hash_missing')}
+                        </small>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td>{formatCompactNumber(row.totalCalls)}</td>
+                  <td
+                    className={
+                      row.successRate >= 0.95
+                        ? styles.goodText
+                        : row.successRate >= 0.85
+                          ? styles.warnText
+                          : styles.badText
+                    }
+                  >
+                    {formatPercent(row.successRate)}
+                  </td>
+                  <td className={row.failureCalls > 0 ? styles.badText : undefined}>
+                    {formatCompactNumber(row.failureCalls)}
+                  </td>
+                  <td>{formatCompactNumber(row.totalTokens)}</td>
+                  <td>{formatCompactNumber(row.inputTokens)}</td>
+                  <td>{formatCompactNumber(row.outputTokens)}</td>
+                  <td>{formatCompactNumber(row.cachedTokens)}</td>
+                  <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
+                  <td>{new Date(row.lastSeenAt).toLocaleString(i18n.language)}</td>
+                </tr>
+              ))}
+              {apiKeyRows.length === 0 ? (
+                <tr>
+                  <td colSpan={10}>
                     <div className={styles.emptyTable}>
                       {deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
                     </div>
