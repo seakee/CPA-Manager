@@ -119,6 +119,16 @@ const buildSearchText = (...parts: Array<string | number | boolean | null | unde
 const shouldIncludeInStats = (row: Pick<MonitoringEventRow, 'failed' | 'inputTokens' | 'outputTokens'>) =>
   row.failed || row.inputTokens > 0 || row.outputTokens > 0;
 
+const UNKNOWN_API_KEY_ID = '__unknown_api_key__';
+const UNKNOWN_API_KEY_LABEL = '-';
+
+const formatApiKeyHashLabel = (hash: string) => {
+  const trimmed = hash.trim();
+  if (!trimmed) return UNKNOWN_API_KEY_LABEL;
+  if (trimmed.length <= 20) return trimmed;
+  return `${trimmed.slice(0, 12)}...${trimmed.slice(-6)}`;
+};
+
 type MonitoringChannelMeta = {
   key: string;
   name: string;
@@ -257,6 +267,9 @@ export type MonitoringEventRow = {
   endpoint: string;
   endpointMethod: string;
   endpointPath: string;
+  apiKey: string;
+  apiKeyHash: string;
+  apiKeyLabel: string;
   sourceKey: string;
   source: string;
   sourceMasked: string;
@@ -342,6 +355,29 @@ export type MonitoringAccountRow = {
   models: MonitoringAccountModelSpendRow[];
 };
 
+export type MonitoringApiKeyRow = {
+  id: string;
+  apiKey: string;
+  apiKeyHash: string;
+  apiKeyLabel: string;
+  sources: string[];
+  accounts: string[];
+  providers: string[];
+  channels: string[];
+  models: string[];
+  totalCalls: number;
+  successCalls: number;
+  failureCalls: number;
+  successRate: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number | null;
+  lastSeenAt: number;
+};
+
 export type MonitoringRealtimeRow = {
   id: string;
   account: string;
@@ -383,6 +419,7 @@ export interface UseMonitoringDataParams {
   usage: unknown;
   config: Config | null | undefined;
   modelPrices: Record<string, ModelPrice>;
+  apiKeyHashMap?: Record<string, string>;
   timeRange: MonitoringTimeRange;
   searchQuery: string;
 }
@@ -794,6 +831,115 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
         right.lastSeenAt - left.lastSeenAt ||
         right.totalCalls - left.totalCalls ||
         right.totalCost - left.totalCost
+    );
+};
+
+export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow[] => {
+  const grouped = new Map<
+    string,
+    {
+      id: string;
+      apiKey: string;
+      apiKeyHash: string;
+      apiKeyLabel: string;
+      sources: Set<string>;
+      accounts: Set<string>;
+      providers: Set<string>;
+      channels: Set<string>;
+      models: Set<string>;
+      totalCalls: number;
+      successCalls: number;
+      failureCalls: number;
+      inputTokens: number;
+      outputTokens: number;
+      cachedTokens: number;
+      totalTokens: number;
+      totalCost: number;
+      latencySum: number;
+      latencyCount: number;
+      lastSeenAt: number;
+    }
+  >();
+
+  rows.forEach((row) => {
+    const apiKey = row.apiKey.trim();
+    const apiKeyHash = row.apiKeyHash.trim();
+    const id = apiKey || apiKeyHash || UNKNOWN_API_KEY_ID;
+    const existing = grouped.get(id) ?? {
+      id,
+      apiKey,
+      apiKeyHash,
+      apiKeyLabel: apiKey || row.apiKeyLabel || formatApiKeyHashLabel(apiKeyHash),
+      sources: new Set<string>(),
+      accounts: new Set<string>(),
+      providers: new Set<string>(),
+      channels: new Set<string>(),
+      models: new Set<string>(),
+      totalCalls: 0,
+      successCalls: 0,
+      failureCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      latencySum: 0,
+      latencyCount: 0,
+      lastSeenAt: 0,
+    };
+
+    existing.sources.add(row.source);
+    existing.accounts.add(row.account);
+    existing.providers.add(row.provider);
+    existing.channels.add(row.channel);
+    existing.models.add(row.model);
+    existing.totalCalls += 1;
+    existing.successCalls += row.failed ? 0 : 1;
+    existing.failureCalls += row.failed ? 1 : 0;
+    existing.inputTokens += row.inputTokens;
+    existing.outputTokens += row.outputTokens;
+    existing.cachedTokens += row.cachedTokens;
+    existing.totalTokens += row.totalTokens;
+    existing.totalCost += row.totalCost;
+    existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
+
+    if (row.latencyMs !== null) {
+      existing.latencySum += row.latencyMs;
+      existing.latencyCount += 1;
+    }
+
+    grouped.set(id, existing);
+  });
+
+  return Array.from(grouped.values())
+    .map((item) => ({
+      id: item.id,
+      apiKey: item.apiKey,
+      apiKeyHash: item.apiKeyHash,
+      apiKeyLabel: item.apiKeyLabel,
+      sources: Array.from(item.sources).filter(Boolean).sort(),
+      accounts: Array.from(item.accounts).filter(Boolean).sort(),
+      providers: Array.from(item.providers).filter(Boolean).sort(),
+      channels: Array.from(item.channels).filter(Boolean).sort(),
+      models: Array.from(item.models).filter(Boolean).sort(),
+      totalCalls: item.totalCalls,
+      successCalls: item.successCalls,
+      failureCalls: item.failureCalls,
+      successRate: item.totalCalls > 0 ? item.successCalls / item.totalCalls : 1,
+      inputTokens: item.inputTokens,
+      outputTokens: item.outputTokens,
+      cachedTokens: item.cachedTokens,
+      totalTokens: item.totalTokens,
+      totalCost: item.totalCost,
+      averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
+      lastSeenAt: item.lastSeenAt,
+    }))
+    .sort(
+      (left, right) =>
+        right.totalCalls - left.totalCalls ||
+        right.totalTokens - left.totalTokens ||
+        right.lastSeenAt - left.lastSeenAt ||
+        left.apiKeyLabel.localeCompare(right.apiKeyLabel)
     );
 };
 
@@ -1277,7 +1423,8 @@ const buildEventRows = (
   authFileMap: Map<string, CredentialInfo>,
   sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
   channelByAuthIndex: Map<string, MonitoringChannelMeta>,
-  modelPrices: Record<string, ModelPrice>
+  modelPrices: Record<string, ModelPrice>,
+  apiKeyHashMap: Record<string, string>
 ) =>
   details
     .map((detail, index) => {
@@ -1313,6 +1460,9 @@ const buildEventRows = (
       const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
       const dayKey = buildLocalDayKey(timestampMs);
       const hourLabel = buildHourLabel(timestampMs);
+      const apiKeyHash = readString(detail.api_key_hash);
+      const apiKey = readString(detail.api_key) || (apiKeyHash ? apiKeyHashMap[apiKeyHash] ?? '' : '');
+      const apiKeyLabel = apiKey || formatApiKeyHashLabel(apiKeyHash);
       const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
       const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
 
@@ -1326,6 +1476,9 @@ const buildEventRows = (
         endpoint,
         endpointMethod,
         endpointPath,
+        apiKey,
+        apiKeyHash,
+        apiKeyLabel,
         sourceKey,
         source: sourceLabel,
         sourceMasked,
@@ -1351,6 +1504,9 @@ const buildEventRows = (
         taskKey,
         searchText: buildSearchText(
           detail.__modelName,
+          apiKey,
+          apiKeyHash,
+          apiKeyLabel,
           sourceLabel,
           authMeta?.account,
           authMeta?.label,
@@ -1415,6 +1571,7 @@ export function useMonitoringData({
   usage,
   config,
   modelPrices,
+  apiKeyHashMap = {},
   timeRange,
   searchQuery,
 }: UseMonitoringDataParams): UseMonitoringDataReturn {
@@ -1504,10 +1661,10 @@ export function useMonitoringData({
 
   const allRows = useMemo(() => {
     const details = collectUsageDetailsWithEndpoint(usage);
-    return buildEventRows(details, authMetaMap, authFileMap, sourceInfoMap, channelByAuthIndex, modelPrices).sort(
+    return buildEventRows(details, authMetaMap, authFileMap, sourceInfoMap, channelByAuthIndex, modelPrices, apiKeyHashMap).sort(
       (left, right) => right.timestampMs - left.timestampMs
     );
-  }, [authFileMap, authMetaMap, channelByAuthIndex, modelPrices, sourceInfoMap, usage]);
+  }, [apiKeyHashMap, authFileMap, authMetaMap, channelByAuthIndex, modelPrices, sourceInfoMap, usage]);
 
   const filteredRows = useMemo(
     () => buildRangeFilteredRows(allRows, timeRange, searchQuery),

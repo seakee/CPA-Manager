@@ -25,6 +25,7 @@ type Event struct {
 	AuthIndex       string `json:"auth_index,omitempty"`
 	Source          string `json:"source,omitempty"`
 	SourceHash      string `json:"source_hash,omitempty"`
+	APIKey          string `json:"api_key,omitempty"`
 	APIKeyHash      string `json:"api_key_hash,omitempty"`
 	InputTokens     int64  `json:"input_tokens"`
 	OutputTokens    int64  `json:"output_tokens"`
@@ -48,12 +49,14 @@ type Tokens struct {
 }
 
 type Detail struct {
-	Timestamp string `json:"timestamp"`
-	Source    string `json:"source"`
-	AuthIndex string `json:"auth_index,omitempty"`
-	LatencyMS *int64 `json:"latency_ms,omitempty"`
-	Tokens    Tokens `json:"tokens"`
-	Failed    bool   `json:"failed"`
+	Timestamp  string `json:"timestamp"`
+	Source     string `json:"source"`
+	AuthIndex  string `json:"auth_index,omitempty"`
+	APIKey     string `json:"api_key,omitempty"`
+	APIKeyHash string `json:"api_key_hash,omitempty"`
+	LatencyMS  *int64 `json:"latency_ms,omitempty"`
+	Tokens     Tokens `json:"tokens"`
+	Failed     bool   `json:"failed"`
 }
 
 type ModelAggregate struct {
@@ -133,6 +136,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		AuthIndex:       authIndex,
 		Source:          source,
 		SourceHash:      hashString(sourceRaw),
+		APIKey:          apiKey,
 		APIKeyHash:      hashString(apiKey),
 		InputTokens:     inputTokens,
 		OutputTokens:    outputTokens,
@@ -182,11 +186,13 @@ func BuildPayload(events []Event) Payload {
 			apiEntry.Models[model] = modelEntry
 		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
-			Timestamp: event.Timestamp,
-			Source:    event.Source,
-			AuthIndex: event.AuthIndex,
-			LatencyMS: event.LatencyMS,
-			Failed:    event.Failed,
+			Timestamp:  event.Timestamp,
+			Source:     event.Source,
+			AuthIndex:  event.AuthIndex,
+			APIKey:     event.APIKey,
+			APIKeyHash: event.APIKeyHash,
+			LatencyMS:  event.LatencyMS,
+			Failed:     event.Failed,
 			Tokens: Tokens{
 				InputTokens:     event.InputTokens,
 				OutputTokens:    event.OutputTokens,
