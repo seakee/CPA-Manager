@@ -8,6 +8,7 @@ import {
   type ModelPriceSyncResponse,
   type UsageExportResponse,
   type UsageImportResponse,
+  type UsageServiceApiKeyMapItem,
 } from '@/services/api/usageService';
 import { useAuthStore, useUsageServiceStore } from '@/stores';
 import { detectApiBaseFromLocation } from '@/utils/connection';
@@ -24,6 +25,7 @@ export interface UsagePayload {
 
 export interface UseUsageDataReturn {
   usage: UsagePayload | null;
+  apiKeyMap: UsageServiceApiKeyMapItem[];
   loading: boolean;
   error: string;
   lastRefreshedAt: Date | null;
@@ -42,6 +44,7 @@ export function useUsageData(): UseUsageDataReturn {
   const usageServiceEnabled = useUsageServiceStore((state) => state.enabled);
   const usageServiceBase = useUsageServiceStore((state) => state.serviceBase);
   const [usage, setUsage] = useState<UsagePayload | null>(null);
+  const [apiKeyMap, setApiKeyMap] = useState<UsageServiceApiKeyMapItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
@@ -151,8 +154,18 @@ export function useUsageData(): UseUsageDataReturn {
         usageServiceEnabled && usageServiceBase
           ? await usageServiceApi.getUsage(usageServiceBase, managementKey)
           : await apiClient.get<UsagePayload>('/usage');
+      let nextApiKeyMap: UsageServiceApiKeyMapItem[] = [];
+      if (usageServiceEnabled && usageServiceBase) {
+        try {
+          const mapResponse = await usageServiceApi.getApiKeyMap(usageServiceBase, managementKey);
+          nextApiKeyMap = Array.isArray(mapResponse.items) ? mapResponse.items : [];
+        } catch {
+          nextApiKeyMap = [];
+        }
+      }
       if (requestIdRef.current !== requestId) return;
       setUsage(payload ?? null);
+      setApiKeyMap(nextApiKeyMap);
       setLastRefreshedAt(new Date());
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
@@ -189,6 +202,7 @@ export function useUsageData(): UseUsageDataReturn {
 
   return {
     usage,
+    apiKeyMap,
     loading,
     error,
     lastRefreshedAt,

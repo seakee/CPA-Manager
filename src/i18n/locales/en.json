@@ -1190,7 +1190,9 @@
     "clear_account_focus": "Clear Account Focus",
     "account_overview_title": "Account Overview",
     "account_overview_desc": "Realtime account-level totals for calls, success and failure, token structure, and spend, with expandable model cost details and live Codex quota fetches.",
-    "codex_inspection_entry": "Codex Account Inspection",
+
+    "api_key_overview_title": "Client API Key Overview",
+    "api_key_overview_desc": "Break down calls, success and failure, token structure, and spend by CLIProxyAPI top-level api-keys.",    "codex_inspection_entry": "Codex Account Inspection",
     "codex_inspection_eyebrow": "Codex Account Inspection",
     "codex_inspection_title": "Codex Account Inspection",
     "codex_inspection_desc": "Inspect Codex accounts independently for quota exhaustion, invalid accounts, and disabled recovery. Delete, disable, and enable actions are executed only after confirmation.",

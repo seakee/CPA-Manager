@@ -23,7 +23,10 @@ export interface UsageTokens {
 export interface UsageDetail {
   timestamp: string;
   source: string;
+  provider?: string;
+  auth_type?: string;
   auth_index: string | number | null;
+  api_key_hash?: string;
   latency_ms?: number;
   tokens: UsageTokens;
   failed: boolean;
@@ -243,6 +246,24 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
             detailRaw.authIndex ??
             detailRaw.AuthIndex ??
             null) as UsageDetail['auth_index'],
+          provider:
+            typeof detailRaw.provider === 'string'
+              ? detailRaw.provider
+              : typeof detailRaw.type === 'string'
+                ? detailRaw.type
+                : undefined,
+          auth_type:
+            typeof detailRaw.auth_type === 'string'
+              ? detailRaw.auth_type
+              : typeof detailRaw.authType === 'string'
+                ? detailRaw.authType
+                : undefined,
+          api_key_hash:
+            typeof detailRaw.api_key_hash === 'string'
+              ? detailRaw.api_key_hash
+              : typeof detailRaw.apiKeyHash === 'string'
+                ? detailRaw.apiKeyHash
+                : undefined,
           latency_ms: latencyMs ?? undefined,
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
@@ -295,6 +316,24 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
             detailRaw.authIndex ??
             detailRaw.AuthIndex ??
             null) as UsageDetail['auth_index'],
+          provider:
+            typeof detailRaw.provider === 'string'
+              ? detailRaw.provider
+              : typeof detailRaw.type === 'string'
+                ? detailRaw.type
+                : undefined,
+          auth_type:
+            typeof detailRaw.auth_type === 'string'
+              ? detailRaw.auth_type
+              : typeof detailRaw.authType === 'string'
+                ? detailRaw.authType
+                : undefined,
+          api_key_hash:
+            typeof detailRaw.api_key_hash === 'string'
+              ? detailRaw.api_key_hash
+              : typeof detailRaw.apiKeyHash === 'string'
+                ? detailRaw.apiKeyHash
+                : undefined,
           latency_ms: latencyMs ?? undefined,
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,

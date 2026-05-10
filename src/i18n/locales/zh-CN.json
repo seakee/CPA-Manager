@@ -1190,7 +1190,9 @@
     "clear_account_focus": "取消账号聚焦",
     "account_overview_title": "账号汇总",
     "account_overview_desc": "按账号实时汇总调用次数、成功失败、Token 结构和总花费，可展开查看模型花费明细，并拉取该账号的 Codex 配额。",
-    "codex_inspection_entry": "Codex 账号巡检",
+
+    "api_key_overview_title": "客户端密钥汇总",
+    "api_key_overview_desc": "按 CLIProxyAPI 顶层 api-keys 统计调用次数、成功失败、Token 结构与总花费。",    "codex_inspection_entry": "Codex 账号巡检",
     "codex_inspection_eyebrow": "Codex Account Inspection",
     "codex_inspection_title": "Codex 账号巡检",
     "codex_inspection_desc": "独立检查 Codex 账号的额度、失效状态和禁用状态，仅在用户确认后才执行删除、禁用或启用动作。",

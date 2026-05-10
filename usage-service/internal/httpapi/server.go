@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"context"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -82,6 +85,10 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/model-prices") {
 		s.withCORS(s.handleModelPrices)(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v0/management/api-key-map") {
+		s.withCORS(s.handleAPIKeyMap)(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/usage") {
@@ -362,6 +369,103 @@ func selectModelPrices(prices map[string]store.ModelPrice, models []string) map[
 		}
 	}
 	return selected
+}
+
+func (s *Server) handleAPIKeyMap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	setup, ok, err := s.resolveSetup(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusPreconditionRequired, errors.New("usage service is not configured"))
+		return
+	}
+	if !authMatches(r, setup.ManagementKey) {
+		writeError(w, http.StatusUnauthorized, errors.New("invalid management key"))
+		return
+	}
+	items, err := fetchAPIKeyMap(r.Context(), setup.CPAUpstreamURL, setup.ManagementKey)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+type apiKeyMapItem struct {
+	APIKeyHash string `json:"apiKeyHash"`
+	APIKeyLabel string `json:"apiKeyLabel"`
+	APIKeyMasked string `json:"apiKeyMasked"`
+}
+
+func fetchAPIKeyMap(ctx context.Context, baseURL string, key string) ([]apiKeyMapItem, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v0/management/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	client := &http.Client{Timeout: 15 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, errors.New("api key map fetch failed: " + res.Status)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	raw := payload["api-keys"]
+	if raw == nil {
+		raw = payload["apiKeys"]
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return []apiKeyMapItem{}, nil
+	}
+	items := make([]apiKeyMapItem, 0, len(arr))
+	for _, item := range arr {
+		value := strings.TrimSpace(toString(item))
+		if value == "" {
+			continue
+		}
+		items = append(items, apiKeyMapItem{
+			APIKeyHash:   sha256Hex(value),
+			APIKeyLabel:  value,
+			APIKeyMasked: maskAPIKey(value),
+		})
+	}
+	return items, nil
+}
+
+func sha256Hex(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(sum[:])
+}
+
+func maskAPIKey(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "-"
+	}
+	if len(trimmed) <= 10 {
+		return trimmed
+	}
+	return trimmed[:6] + "..." + trimmed[len(trimmed)-4:]
+}
+
+func toString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func findSuffixModelPrice(prices map[string]store.ModelPrice, model string) (store.ModelPrice, bool) {
