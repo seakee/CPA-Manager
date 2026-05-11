@@ -48,12 +48,15 @@ type Tokens struct {
 }
 
 type Detail struct {
-	Timestamp string `json:"timestamp"`
-	Source    string `json:"source"`
-	AuthIndex string `json:"auth_index,omitempty"`
-	LatencyMS *int64 `json:"latency_ms,omitempty"`
-	Tokens    Tokens `json:"tokens"`
-	Failed    bool   `json:"failed"`
+	Timestamp  string `json:"timestamp"`
+	Source     string `json:"source"`
+	Provider   string `json:"provider,omitempty"`
+	AuthType   string `json:"auth_type,omitempty"`
+	AuthIndex  string `json:"auth_index,omitempty"`
+	APIKeyHash string `json:"api_key_hash,omitempty"`
+	LatencyMS  *int64 `json:"latency_ms,omitempty"`
+	Tokens     Tokens `json:"tokens"`
+	Failed     bool   `json:"failed"`
 }
 
 type ModelAggregate struct {
@@ -182,11 +185,14 @@ func BuildPayload(events []Event) Payload {
 			apiEntry.Models[model] = modelEntry
 		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
-			Timestamp: event.Timestamp,
-			Source:    event.Source,
-			AuthIndex: event.AuthIndex,
-			LatencyMS: event.LatencyMS,
-			Failed:    event.Failed,
+			Timestamp:  event.Timestamp,
+			Source:     event.Source,
+			Provider:   event.Provider,
+			AuthType:   event.AuthType,
+			AuthIndex:  event.AuthIndex,
+			APIKeyHash: event.APIKeyHash,
+			LatencyMS:  event.LatencyMS,
+			Failed:     event.Failed,
 			Tokens: Tokens{
 				InputTokens:     event.InputTokens,
 				OutputTokens:    event.OutputTokens,

@@ -37,6 +37,7 @@ type fileConfig struct {
 	DataDir           string   `json:"dataDir,omitempty"`
 	DBPath            string   `json:"dbPath,omitempty"`
 	CPAUpstreamURL    string   `json:"cpaUpstreamUrl,omitempty"`
+	CPAManagementKey  string   `json:"cpaManagementKey,omitempty"`
 	ManagementKeyFile string   `json:"managementKeyFile,omitempty"`
 	CollectorMode     string   `json:"collectorMode,omitempty"`
 	Queue             string   `json:"queue,omitempty"`
@@ -72,12 +73,16 @@ func Load() (Config, error) {
 	if cfgFile.ManagementKeyFile != "" {
 		managementKeyFile = resolveConfigPath(cfgFile.ManagementKeyFile, cfgDir)
 	}
+	resolvedManagementKey := readSecret("CPA_MANAGEMENT_KEY", "CPA_MANAGEMENT_KEY_FILE", managementKeyFile)
+	if strings.TrimSpace(resolvedManagementKey) == "" {
+		resolvedManagementKey = strings.TrimSpace(cfgFile.CPAManagementKey)
+	}
 
 	return Config{
 		HTTPAddr:       env("HTTP_ADDR", stringFallback(cfgFile.HTTPAddr, "0.0.0.0:18317")),
 		DBPath:         env("USAGE_DB_PATH", dbPathFallback),
 		CPAUpstreamURL: env("CPA_UPSTREAM_URL", cfgFile.CPAUpstreamURL),
-		ManagementKey:  readSecret("CPA_MANAGEMENT_KEY", "CPA_MANAGEMENT_KEY_FILE", managementKeyFile),
+		ManagementKey:  resolvedManagementKey,
 		CollectorMode:  normalizeCollectorMode(env("USAGE_COLLECTOR_MODE", stringFallback(cfgFile.CollectorMode, "auto"))),
 		Queue:          env("USAGE_RESP_QUEUE", stringFallback(cfgFile.Queue, "usage")),
 		PopSide:        env("USAGE_RESP_POP_SIDE", stringFallback(cfgFile.PopSide, "right")),

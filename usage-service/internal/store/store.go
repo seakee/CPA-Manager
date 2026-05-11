@@ -44,6 +44,70 @@ type ModelPriceSyncResult struct {
 	Skipped  int `json:"skipped"`
 }
 
+type CodexInspectionRun struct {
+	RunID                string `json:"runId"`
+	RunName              string `json:"runName"`
+	Status               string `json:"status"`
+	TargetType           string `json:"targetType"`
+	Workers              int    `json:"workers"`
+	DeleteWorkers        int    `json:"deleteWorkers"`
+	Timeout              int    `json:"timeout"`
+	Retries              int    `json:"retries"`
+	UserAgent            string `json:"userAgent"`
+	UsedPercentThreshold float64 `json:"usedPercentThreshold"`
+	SampleSize           int    `json:"sampleSize"`
+	AutoExecuteActions   bool   `json:"autoExecuteActions"`
+	TargetScopeType      string `json:"targetScopeType"`
+	SelectedTargetsJSON  string `json:"selectedTargetsJson,omitempty"`
+	SummaryJSON          string `json:"summaryJson,omitempty"`
+	ProgressJSON         string `json:"progressJson,omitempty"`
+	StartedAtMS          int64  `json:"startedAtMs"`
+	UpdatedAtMS          int64  `json:"updatedAtMs"`
+	FinishedAtMS         *int64 `json:"finishedAtMs,omitempty"`
+}
+
+type CodexInspectionResultRow struct {
+	RunID              string `json:"runId"`
+	AccountKey         string `json:"accountKey"`
+	FileName           string `json:"fileName"`
+	DisplayAccount     string `json:"displayAccount"`
+	AuthIndex          string `json:"authIndex,omitempty"`
+	AccountID          string `json:"accountId,omitempty"`
+	Provider           string `json:"provider,omitempty"`
+	Disabled           bool   `json:"disabled"`
+	Status             string `json:"status,omitempty"`
+	State              string `json:"state,omitempty"`
+	Action             string `json:"action"`
+	ActionReason       string `json:"actionReason,omitempty"`
+	StatusCode         *int   `json:"statusCode,omitempty"`
+	UsedPercent        *float64 `json:"usedPercent,omitempty"`
+	IsQuota            bool   `json:"isQuota"`
+	Error              string `json:"error,omitempty"`
+	ResponseBodyText   string `json:"responseBodyText,omitempty"`
+	ResponseBodyJSON   string `json:"responseBodyJson,omitempty"`
+	ResponseHeadersJSON string `json:"responseHeadersJson,omitempty"`
+	UpdatedAtMS        int64  `json:"updatedAtMs"`
+}
+
+type CodexInspectionLogRow struct {
+	ID          int64  `json:"id"`
+	RunID       string `json:"runId"`
+	Level       string `json:"level"`
+	Message     string `json:"message"`
+	CreatedAtMS int64  `json:"createdAtMs"`
+}
+
+type CodexInspectionActionSelection struct {
+	RunID         string `json:"runId"`
+	AccountKey    string `json:"accountKey"`
+	Selected      bool   `json:"selected"`
+	PlannedAction string `json:"plannedAction"`
+	Executed      bool   `json:"executed"`
+	Success       bool   `json:"success"`
+	Error         string `json:"error,omitempty"`
+	UpdatedAtMS   int64  `json:"updatedAtMs"`
+}
+
 type Store struct {
 	db *sql.DB
 }
@@ -131,6 +195,72 @@ func (s *Store) init() error {
 			updated_at_ms integer not null,
 			synced_at_ms integer
 		)`,
+		`create table if not exists codex_inspection_runs (
+			run_id text primary key,
+			run_name text not null,
+			status text not null,
+			target_type text not null,
+			workers integer not null,
+			delete_workers integer not null,
+			timeout integer not null,
+			retries integer not null,
+			user_agent text not null,
+			used_percent_threshold real not null,
+			sample_size integer not null,
+			auto_execute_actions integer not null default 0,
+			target_scope_type text not null,
+			selected_targets_json text,
+			summary_json text,
+			progress_json text,
+			started_at_ms integer not null,
+			updated_at_ms integer not null,
+			finished_at_ms integer
+		)`,
+		`create index if not exists idx_codex_inspection_runs_started on codex_inspection_runs(started_at_ms desc)`,
+		`create table if not exists codex_inspection_results (
+			run_id text not null,
+			account_key text not null,
+			file_name text not null,
+			display_account text not null,
+			auth_index text,
+			account_id text,
+			provider text,
+			disabled integer not null default 0,
+			status text,
+			state text,
+			action text not null,
+			action_reason text,
+			status_code integer,
+			used_percent real,
+			is_quota integer not null default 0,
+			error text,
+			response_body_text text,
+			response_body_json text,
+			response_headers_json text,
+			updated_at_ms integer not null,
+			primary key (run_id, account_key)
+		)`,
+		`create index if not exists idx_codex_inspection_results_run on codex_inspection_results(run_id)`,
+		`create table if not exists codex_inspection_logs (
+			id integer primary key autoincrement,
+			run_id text not null,
+			level text not null,
+			message text not null,
+			created_at_ms integer not null
+		)`,
+		`create index if not exists idx_codex_inspection_logs_run on codex_inspection_logs(run_id, id)`,
+		`create table if not exists codex_inspection_action_selections (
+			run_id text not null,
+			account_key text not null,
+			selected integer not null default 0,
+			planned_action text not null,
+			executed integer not null default 0,
+			success integer not null default 0,
+			error text,
+			updated_at_ms integer not null,
+			primary key (run_id, account_key)
+		)`,
+		`create index if not exists idx_codex_inspection_actions_run on codex_inspection_action_selections(run_id)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -543,4 +673,210 @@ func nullInt(value *int64) any {
 
 func (s Setup) String() string {
 	return fmt.Sprintf("upstream=%s queue=%s popSide=%s", s.CPAUpstreamURL, s.Queue, s.PopSide)
+}
+
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func nullIntValue(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullFloat64Value(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func (s *Store) SaveCodexInspectionRun(ctx context.Context, run CodexInspectionRun) error {
+	_, err := s.db.ExecContext(ctx, `insert into codex_inspection_runs(
+		run_id, run_name, status, target_type, workers, delete_workers, timeout, retries, user_agent,
+		used_percent_threshold, sample_size, auto_execute_actions, target_scope_type, selected_targets_json,
+		summary_json, progress_json, started_at_ms, updated_at_ms, finished_at_ms
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	on conflict(run_id) do update set
+		run_name=excluded.run_name,
+		status=excluded.status,
+		target_type=excluded.target_type,
+		workers=excluded.workers,
+		delete_workers=excluded.delete_workers,
+		timeout=excluded.timeout,
+		retries=excluded.retries,
+		user_agent=excluded.user_agent,
+		used_percent_threshold=excluded.used_percent_threshold,
+		sample_size=excluded.sample_size,
+		auto_execute_actions=excluded.auto_execute_actions,
+		target_scope_type=excluded.target_scope_type,
+		selected_targets_json=excluded.selected_targets_json,
+		summary_json=excluded.summary_json,
+		progress_json=excluded.progress_json,
+		started_at_ms=excluded.started_at_ms,
+		updated_at_ms=excluded.updated_at_ms,
+		finished_at_ms=excluded.finished_at_ms`,
+		run.RunID, run.RunName, run.Status, run.TargetType, run.Workers, run.DeleteWorkers, run.Timeout, run.Retries, run.UserAgent,
+		run.UsedPercentThreshold, run.SampleSize, boolToInt(run.AutoExecuteActions), run.TargetScopeType, nullString(run.SelectedTargetsJSON),
+		nullString(run.SummaryJSON), nullString(run.ProgressJSON), run.StartedAtMS, run.UpdatedAtMS, nullInt(run.FinishedAtMS))
+	return err
+}
+
+func (s *Store) SaveCodexInspectionResults(ctx context.Context, items []CodexInspectionResultRow) error {
+	if len(items) == 0 { return nil }
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil { return err }
+	defer func(){ _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, `insert into codex_inspection_results(
+		run_id, account_key, file_name, display_account, auth_index, account_id, provider, disabled, status, state,
+		action, action_reason, status_code, used_percent, is_quota, error, response_body_text, response_body_json,
+		response_headers_json, updated_at_ms
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	on conflict(run_id, account_key) do update set
+		file_name=excluded.file_name,
+		display_account=excluded.display_account,
+		auth_index=excluded.auth_index,
+		account_id=excluded.account_id,
+		provider=excluded.provider,
+		disabled=excluded.disabled,
+		status=excluded.status,
+		state=excluded.state,
+		action=excluded.action,
+		action_reason=excluded.action_reason,
+		status_code=excluded.status_code,
+		used_percent=excluded.used_percent,
+		is_quota=excluded.is_quota,
+		error=excluded.error,
+		response_body_text=excluded.response_body_text,
+		response_body_json=excluded.response_body_json,
+		response_headers_json=excluded.response_headers_json,
+		updated_at_ms=excluded.updated_at_ms`)
+	if err != nil { return err }
+	defer stmt.Close()
+	for _, item := range items {
+		_, err = stmt.ExecContext(ctx,
+			item.RunID, item.AccountKey, item.FileName, item.DisplayAccount, nullString(item.AuthIndex), nullString(item.AccountID), nullString(item.Provider),
+			boolToInt(item.Disabled), nullString(item.Status), nullString(item.State), item.Action, nullString(item.ActionReason),
+			nullIntValue(item.StatusCode), nullFloat64Value(item.UsedPercent), boolToInt(item.IsQuota), nullString(item.Error),
+			nullString(item.ResponseBodyText), nullString(item.ResponseBodyJSON), nullString(item.ResponseHeadersJSON), item.UpdatedAtMS)
+		if err != nil { return err }
+	}
+	return tx.Commit()
+}
+
+func (s *Store) AddCodexInspectionLog(ctx context.Context, row CodexInspectionLogRow) error {
+	_, err := s.db.ExecContext(ctx, `insert into codex_inspection_logs(run_id, level, message, created_at_ms) values(?, ?, ?, ?)`, row.RunID, row.Level, row.Message, row.CreatedAtMS)
+	return err
+}
+
+func (s *Store) ReplaceCodexInspectionActionSelections(ctx context.Context, runID string, items []CodexInspectionActionSelection) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil { return err }
+	defer func(){ _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `delete from codex_inspection_action_selections where run_id = ?`, runID); err != nil { return err }
+	stmt, err := tx.PrepareContext(ctx, `insert into codex_inspection_action_selections(run_id, account_key, selected, planned_action, executed, success, error, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil { return err }
+	defer stmt.Close()
+	for _, item := range items {
+		if _, err := stmt.ExecContext(ctx, item.RunID, item.AccountKey, boolToInt(item.Selected), item.PlannedAction, boolToInt(item.Executed), boolToInt(item.Success), nullString(item.Error), item.UpdatedAtMS); err != nil { return err }
+	}
+	return tx.Commit()
+}
+
+
+func (s *Store) ListCodexInspectionRuns(ctx context.Context, limit int) ([]CodexInspectionRun, error) {
+	if limit <= 0 { limit = 50 }
+	rows, err := s.db.QueryContext(ctx, `select run_id, run_name, status, target_type, workers, delete_workers, timeout, retries, user_agent,
+		used_percent_threshold, sample_size, auto_execute_actions, target_scope_type, selected_targets_json, summary_json, progress_json,
+		started_at_ms, updated_at_ms, finished_at_ms from codex_inspection_runs order by started_at_ms desc limit ?`, limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make([]CodexInspectionRun, 0)
+	for rows.Next() {
+		var item CodexInspectionRun
+		var selected, summary, progress sql.NullString
+		var auto int
+		var finished sql.NullInt64
+		if err := rows.Scan(&item.RunID, &item.RunName, &item.Status, &item.TargetType, &item.Workers, &item.DeleteWorkers, &item.Timeout, &item.Retries, &item.UserAgent,
+			&item.UsedPercentThreshold, &item.SampleSize, &auto, &item.TargetScopeType, &selected, &summary, &progress, &item.StartedAtMS, &item.UpdatedAtMS, &finished); err != nil { return nil, err }
+		item.AutoExecuteActions = auto != 0
+		item.SelectedTargetsJSON = selected.String
+		item.SummaryJSON = summary.String
+		item.ProgressJSON = progress.String
+		if finished.Valid { v:=finished.Int64; item.FinishedAtMS=&v }
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetCodexInspectionRun(ctx context.Context, runID string) (CodexInspectionRun, bool, error) {
+	var item CodexInspectionRun
+	var selected, summary, progress sql.NullString
+	var auto int
+	var finished sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `select run_id, run_name, status, target_type, workers, delete_workers, timeout, retries, user_agent,
+		used_percent_threshold, sample_size, auto_execute_actions, target_scope_type, selected_targets_json, summary_json, progress_json,
+		started_at_ms, updated_at_ms, finished_at_ms from codex_inspection_runs where run_id = ?`, runID).Scan(
+		&item.RunID, &item.RunName, &item.Status, &item.TargetType, &item.Workers, &item.DeleteWorkers, &item.Timeout, &item.Retries, &item.UserAgent,
+		&item.UsedPercentThreshold, &item.SampleSize, &auto, &item.TargetScopeType, &selected, &summary, &progress, &item.StartedAtMS, &item.UpdatedAtMS, &finished)
+	if errors.Is(err, sql.ErrNoRows) { return CodexInspectionRun{}, false, nil }
+	if err != nil { return CodexInspectionRun{}, false, err }
+	item.AutoExecuteActions = auto != 0
+	item.SelectedTargetsJSON = selected.String
+	item.SummaryJSON = summary.String
+	item.ProgressJSON = progress.String
+	if finished.Valid { v:=finished.Int64; item.FinishedAtMS=&v }
+	return item, true, nil
+}
+
+func (s *Store) GetLatestCodexInspectionRun(ctx context.Context) (CodexInspectionRun, bool, error) {
+	rows, err := s.ListCodexInspectionRuns(ctx, 1)
+	if err != nil || len(rows)==0 {
+		if err != nil { return CodexInspectionRun{}, false, err }
+		return CodexInspectionRun{}, false, nil
+	}
+	return rows[0], true, nil
+}
+
+func (s *Store) LoadCodexInspectionResults(ctx context.Context, runID string) ([]CodexInspectionResultRow, error) {
+	rows, err := s.db.QueryContext(ctx, `select run_id, account_key, file_name, display_account, auth_index, account_id, provider, disabled, status, state,
+		action, action_reason, status_code, used_percent, is_quota, error, response_body_text, response_body_json, response_headers_json, updated_at_ms
+		from codex_inspection_results where run_id = ? order by file_name, display_account`, runID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make([]CodexInspectionResultRow,0)
+	for rows.Next() {
+		var item CodexInspectionResultRow
+		var authIndex, accountID, provider, status, state, reason, errText, bodyText, bodyJSON, headersJSON sql.NullString
+		var disabled, isQuota int
+		var statusCode sql.NullInt64
+		var usedPercent sql.NullFloat64
+		if err := rows.Scan(&item.RunID, &item.AccountKey, &item.FileName, &item.DisplayAccount, &authIndex, &accountID, &provider, &disabled, &status, &state,
+			&item.Action, &reason, &statusCode, &usedPercent, &isQuota, &errText, &bodyText, &bodyJSON, &headersJSON, &item.UpdatedAtMS); err != nil { return nil, err }
+		item.AuthIndex = authIndex.String; item.AccountID = accountID.String; item.Provider = provider.String; item.Disabled = disabled != 0; item.Status = status.String; item.State = state.String; item.ActionReason = reason.String; item.IsQuota = isQuota != 0; item.Error = errText.String; item.ResponseBodyText = bodyText.String; item.ResponseBodyJSON = bodyJSON.String; item.ResponseHeadersJSON = headersJSON.String
+		if statusCode.Valid { v:=int(statusCode.Int64); item.StatusCode=&v }
+		if usedPercent.Valid { v:=usedPercent.Float64; item.UsedPercent=&v }
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) LoadCodexInspectionLogs(ctx context.Context, runID string, limit int) ([]CodexInspectionLogRow, error) {
+	if limit <= 0 { limit = 2000 }
+	rows, err := s.db.QueryContext(ctx, `select id, run_id, level, message, created_at_ms from codex_inspection_logs where run_id = ? order by id asc limit ?`, runID, limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make([]CodexInspectionLogRow,0)
+	for rows.Next() {
+		var item CodexInspectionLogRow
+		if err := rows.Scan(&item.ID, &item.RunID, &item.Level, &item.Message, &item.CreatedAtMS); err != nil { return nil, err }
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

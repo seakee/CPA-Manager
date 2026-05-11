@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/icons';
 import {
   buildAccountRows,
+  buildApiKeyRows,
   buildMonitoringSummary,
   buildRealtimeMonitorRows,
   useMonitoringData,
@@ -118,6 +119,11 @@ const parseDateTimeLocalValue = (value: string) => {
 };
 
 const DEFAULT_ACCOUNT_SORT = {
+  key: 'lastSeenAt',
+  direction: 'desc',
+} as const;
+
+const DEFAULT_API_KEY_SORT = {
   key: 'lastSeenAt',
   direction: 'desc',
 } as const;
@@ -211,6 +217,13 @@ type AccountSortDirection = 'asc' | 'desc';
 type AccountSortState = {
   key: AccountSortKey;
   direction: AccountSortDirection;
+};
+
+type ApiKeySortKey = AccountSortKey;
+type ApiKeySortDirection = AccountSortDirection;
+type ApiKeySortState = {
+  key: ApiKeySortKey;
+  direction: ApiKeySortDirection;
 };
 
 type AccountOverviewColumn = {
@@ -407,6 +420,43 @@ const buildAccountSummaryMetrics = (
 ];
 
 const getAccountSortValue = (row: MonitoringAccountRow, key: AccountSortKey) => {
+  switch (key) {
+    case 'totalCalls':
+      return row.totalCalls;
+    case 'successCalls':
+      return row.successCalls;
+    case 'failureCalls':
+      return row.failureCalls;
+    case 'totalTokens':
+      return row.totalTokens;
+    case 'inputTokens':
+      return row.inputTokens;
+    case 'outputTokens':
+      return row.outputTokens;
+    case 'cachedTokens':
+      return row.cachedTokens;
+    case 'totalCost':
+      return row.totalCost;
+    case 'lastSeenAt':
+    default:
+      return row.lastSeenAt;
+  }
+};
+
+const getApiKeySortValue = (
+  row: {
+    totalCalls: number;
+    successCalls: number;
+    failureCalls: number;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    totalCost: number;
+    lastSeenAt: number;
+  },
+  key: ApiKeySortKey
+) => {
   switch (key) {
     case 'totalCalls':
       return row.totalCalls;
@@ -1093,6 +1143,7 @@ export function MonitoringCenterPage() {
     {}
   );
   const [accountSort, setAccountSort] = useState<AccountSortState>(DEFAULT_ACCOUNT_SORT);
+  const [apiKeySort, setApiKeySort] = useState<ApiKeySortState>(DEFAULT_API_KEY_SORT);
   const [accountPage, setAccountPage] = useState(1);
   const [accountPageSize, setAccountPageSize] = useState(DEFAULT_ACCOUNT_PAGE_SIZE);
   const [realtimePage, setRealtimePage] = useState(1);
@@ -1151,6 +1202,7 @@ export function MonitoringCenterPage() {
 
   const {
     usage,
+    apiKeyMap,
     loading: usageLoading,
     error: usageError,
     lastRefreshedAt,
@@ -1171,6 +1223,7 @@ export function MonitoringCenterPage() {
     refreshMeta,
   } = useMonitoringData({
     usage,
+    apiKeyMap,
     config,
     modelPrices,
     timeRange,
@@ -1317,6 +1370,7 @@ export function MonitoringCenterPage() {
 
   const scopedSummary = useMemo(() => buildMonitoringSummary(scopedStatsRows), [scopedStatsRows]);
   const accountRows = useMemo(() => buildAccountRows(scopedRows), [scopedRows]);
+  const apiKeyRows = useMemo(() => buildApiKeyRows(scopedRows), [scopedRows]);
   const sortedAccountRows = useMemo(() => {
     const directionFactor = accountSort.direction === 'desc' ? -1 : 1;
 
@@ -1330,6 +1384,23 @@ export function MonitoringCenterPage() {
       return compareAccountRowsByDefault(left, right);
     });
   }, [accountRows, accountSort]);
+  const sortedApiKeyRows = useMemo(() => {
+    const directionFactor = apiKeySort.direction === 'desc' ? -1 : 1;
+
+    return [...apiKeyRows].sort((left, right) => {
+      const valueDiff =
+        getApiKeySortValue(left, apiKeySort.key) - getApiKeySortValue(right, apiKeySort.key);
+      if (valueDiff !== 0) {
+        return valueDiff * directionFactor;
+      }
+      return (
+        right.lastSeenAt - left.lastSeenAt ||
+        right.totalCalls - left.totalCalls ||
+        right.totalCost - left.totalCost
+      );
+    });
+  }, [apiKeyRows, apiKeySort]);
+
   const groupedRealtimeRows = useMemo(
     () => buildRealtimeMonitorRows(scopedStatsRows),
     [scopedStatsRows]
@@ -1433,6 +1504,27 @@ export function MonitoringCenterPage() {
     ],
     [t]
   );
+
+  const apiKeyOverviewColumns = useMemo<AccountOverviewColumn[]>(
+    () => [
+      { key: 'api-key', label: t('common.api_key') },
+      { key: 'total-calls', label: t('monitoring.total_calls'), sortKey: 'totalCalls' },
+      { key: 'success-calls', label: t('monitoring.success_calls'), sortKey: 'successCalls' },
+      { key: 'failure-calls', label: t('monitoring.failure_calls'), sortKey: 'failureCalls' },
+      { key: 'total-tokens', label: t('monitoring.total_tokens'), sortKey: 'totalTokens' },
+      { key: 'input-tokens', label: t('monitoring.input_tokens'), sortKey: 'inputTokens' },
+      { key: 'output-tokens', label: t('monitoring.output_tokens'), sortKey: 'outputTokens' },
+      { key: 'cached-tokens', label: t('monitoring.cached_tokens'), sortKey: 'cachedTokens' },
+      { key: 'estimated-cost', label: t('monitoring.estimated_cost'), sortKey: 'totalCost' },
+      {
+        key: 'latest-request-time',
+        label: t('monitoring.latest_request_time'),
+        sortKey: 'lastSeenAt',
+      },
+    ],
+    [t]
+  );
+
 
   const primarySummaryCards: SummaryCardProps[] = [
     {
@@ -1714,6 +1806,20 @@ export function MonitoringCenterPage() {
   const handleAccountSort = useCallback((key: AccountSortKey) => {
     setAccountPage(1);
     setAccountSort((previous) =>
+      previous.key === key
+        ? {
+            key,
+            direction: previous.direction === 'desc' ? 'asc' : 'desc',
+          }
+        : {
+            key,
+            direction: 'desc',
+          }
+    );
+  }, []);
+
+  const handleApiKeySort = useCallback((key: ApiKeySortKey) => {
+    setApiKeySort((previous) =>
       previous.key === key
         ? {
             key,
@@ -2277,6 +2383,102 @@ export function MonitoringCenterPage() {
           onPageSizeChange={handleAccountPageSizeChange}
           t={t}
         />
+      </Panel>
+
+      <Panel
+        title={t('monitoring.api_key_overview_title')}
+        subtitle={t('monitoring.api_key_overview_desc')}
+        className={styles.accountPanel}
+      >
+        <div className={styles.tableWrapper}>
+          <table className={`${styles.table} ${styles.accountOverviewTable}`}>
+            <colgroup>
+              {apiKeyOverviewColumns.map((column) => (
+                <col key={column.key} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr>
+                {apiKeyOverviewColumns.map((column) => {
+                  if (!column.sortKey) {
+                    return <th key={column.key}>{column.label}</th>;
+                  }
+
+                  const isActive = apiKeySort.key === column.sortKey;
+                  const SortIcon = isActive
+                    ? apiKeySort.direction === 'desc'
+                      ? IconChevronDown
+                      : IconChevronUp
+                    : null;
+
+                  return (
+                    <th
+                      key={column.key}
+                      aria-sort={
+                        isActive
+                          ? apiKeySort.direction === 'desc'
+                            ? 'descending'
+                            : 'ascending'
+                          : 'none'
+                      }
+                    >
+                      <button
+                        type="button"
+                        className={[
+                          styles.sortableHeaderButton,
+                          isActive ? styles.sortableHeaderButtonActive : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => handleApiKeySort(column.sortKey!)}
+                      >
+                        <span>{column.label}</span>
+                        <span className={styles.sortIndicator} aria-hidden="true">
+                          {SortIcon ? <SortIcon size={14} /> : null}
+                        </span>
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedApiKeyRows.map((row) => (
+                <tr key={row.id}>
+                  <td>
+                    <div className={styles.primaryCell}>
+                      <span className={styles.monoCell}>{row.apiKeyMasked}</span>
+                      <small>
+                        {row.accounts.slice(0, 2).join(', ')}
+                        {row.accounts.length > 2 ? ` +${row.accounts.length - 2}` : ''}
+                      </small>
+                    </div>
+                  </td>
+                  <td>{formatCompactNumber(row.totalCalls)}</td>
+                  <td>{formatCompactNumber(row.successCalls)}</td>
+                  <td className={row.failureCalls > 0 ? styles.badText : undefined}>
+                    {formatCompactNumber(row.failureCalls)}
+                  </td>
+                  <td>{formatCompactNumber(row.totalTokens)}</td>
+                  <td>{formatCompactNumber(row.inputTokens)}</td>
+                  <td>{formatCompactNumber(row.outputTokens)}</td>
+                  <td>{formatCompactNumber(row.cachedTokens)}</td>
+                  <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
+                  <td>{new Date(row.lastSeenAt).toLocaleString(i18n.language)}</td>
+                </tr>
+              ))}
+              {sortedApiKeyRows.length === 0 ? (
+                <tr>
+                  <td colSpan={apiKeyOverviewColumns.length}>
+                    <div className={styles.emptyTable}>
+                      {hasSearchFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </Panel>
 
       <Panel

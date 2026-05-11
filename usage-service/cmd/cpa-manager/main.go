@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seakee/cpa-manager/usage-service/internal/collector"
+	"github.com/seakee/cpa-manager/usage-service/internal/codexinspection"
 	"github.com/seakee/cpa-manager/usage-service/internal/config"
 	"github.com/seakee/cpa-manager/usage-service/internal/httpapi"
 	"github.com/seakee/cpa-manager/usage-service/internal/store"
@@ -27,6 +28,10 @@ func main() {
 	defer db.Close()
 
 	manager := collector.NewManager(cfg, db)
+	codexManager := codexinspection.NewManager(db, codexinspection.NewHTTPRunner(codexinspection.RunnerDeps{
+		CPAUpstreamURL: cfg.CPAUpstreamURL,
+		ManagementKey:  cfg.ManagementKey,
+	}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -50,7 +55,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(cfg, db, manager).Handler(),
+		Handler:           httpapi.New(cfg, db, manager, codexManager).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

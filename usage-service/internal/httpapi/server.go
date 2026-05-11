@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"context"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/seakee/cpa-manager/usage-service/internal/collector"
+	"github.com/seakee/cpa-manager/usage-service/internal/codexinspection"
 	"github.com/seakee/cpa-manager/usage-service/internal/config"
 	"github.com/seakee/cpa-manager/usage-service/internal/store"
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
@@ -28,6 +32,7 @@ type Server struct {
 	cfg       config.Config
 	store     *store.Store
 	collector *collector.Manager
+	codex     *codexinspection.Manager
 	startedAt int64
 }
 
@@ -54,11 +59,12 @@ type modelPricesSyncRequest struct {
 	Models []string `json:"models"`
 }
 
-func New(cfg config.Config, store *store.Store, collector *collector.Manager) *Server {
+func New(cfg config.Config, store *store.Store, collector *collector.Manager, codex *codexinspection.Manager) *Server {
 	return &Server{
 		cfg:       cfg,
 		store:     store,
 		collector: collector,
+		codex:     codex,
 		startedAt: time.Now().UnixMilli(),
 	}
 }
@@ -82,6 +88,14 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/model-prices") {
 		s.withCORS(s.handleModelPrices)(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v0/management/api-key-map") {
+		s.withCORS(s.handleAPIKeyMap)(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v0/management/codex-inspection") {
+		s.withCORS(s.handleCodexInspection)(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/usage") {
@@ -362,6 +376,107 @@ func selectModelPrices(prices map[string]store.ModelPrice, models []string) map[
 		}
 	}
 	return selected
+}
+
+func (s *Server) handleAPIKeyMap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	setup, ok, err := s.resolveSetup(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusPreconditionRequired, errors.New("usage service is not configured"))
+		return
+	}
+	if !authMatches(r, setup.ManagementKey) {
+		writeError(w, http.StatusUnauthorized, errors.New("invalid management key"))
+		return
+	}
+	items, err := fetchAPIKeyMap(r.Context(), setup.CPAUpstreamURL, setup.ManagementKey)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+type apiKeyMapItem struct {
+	APIKeyHash string `json:"apiKeyHash"`
+	APIKeyLabel string `json:"apiKeyLabel"`
+	APIKeyMasked string `json:"apiKeyMasked"`
+}
+
+func fetchAPIKeyMap(ctx context.Context, baseURL string, key string) ([]apiKeyMapItem, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v0/management/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	client := &http.Client{Timeout: 15 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, errors.New("api key map fetch failed: " + res.Status)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	raw := payload["api-keys"]
+	if raw == nil {
+		raw = payload["apiKeys"]
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return []apiKeyMapItem{}, nil
+	}
+	items := make([]apiKeyMapItem, 0, len(arr))
+	for _, item := range arr {
+		value := strings.TrimSpace(toString(item))
+		if value == "" {
+			continue
+		}
+		masked := maskAPIKey(value)
+		items = append(items, apiKeyMapItem{
+			APIKeyHash:   sha256Hex(value),
+			APIKeyLabel:  masked,
+			APIKeyMasked: masked,
+		})
+	}
+	return items, nil
+}
+
+func sha256Hex(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(sum[:])
+}
+
+func maskAPIKey(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "-"
+	}
+	if len(trimmed) <= 4 {
+		return strings.Repeat("*", len(trimmed))
+	}
+	if len(trimmed) <= 10 {
+		return trimmed[:2] + "***" + trimmed[len(trimmed)-1:]
+	}
+	return trimmed[:4] + "..." + trimmed[len(trimmed)-4:]
+}
+
+func toString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func findSuffixModelPrice(prices map[string]store.ModelPrice, model string) (store.ModelPrice, bool) {
@@ -682,4 +797,95 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 func methodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+}
+
+
+type codexInspectionStartRequest struct {
+	TargetType           string   `json:"targetType"`
+	Workers              int      `json:"workers"`
+	DeleteWorkers        int      `json:"deleteWorkers"`
+	Timeout              int      `json:"timeout"`
+	Retries              int      `json:"retries"`
+	UserAgent            string   `json:"userAgent"`
+	UsedPercentThreshold float64  `json:"usedPercentThreshold"`
+	SampleSize           int      `json:"sampleSize"`
+	AutoExecuteActions   bool     `json:"autoExecuteActions"`
+	SelectedAccounts     []string `json:"selectedAccounts"`
+}
+
+type codexInspectionExecuteRequest struct {
+	RunID    string   `json:"runId"`
+	Keys     []string `json:"keys"`
+	Action   string   `json:"action"`
+}
+
+func (s *Server) handleCodexInspection(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeIfConfigured(w, r) {
+		return
+	}
+	if s.codex == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("codex inspection service unavailable"))
+		return
+	}
+	path := strings.TrimRight(r.URL.Path, "/")
+	switch {
+	case path == "/v0/management/codex-inspection/runs" && r.Method == http.MethodPost:
+		var req codexInspectionStartRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		run, err := s.codex.Start(r.Context(), codexinspection.Settings{
+			TargetType: req.TargetType,
+			Workers: req.Workers,
+			DeleteWorkers: req.DeleteWorkers,
+			Timeout: req.Timeout,
+			Retries: req.Retries,
+			UserAgent: req.UserAgent,
+			UsedPercentThreshold: req.UsedPercentThreshold,
+			SampleSize: req.SampleSize,
+			AutoExecuteActions: req.AutoExecuteActions,
+			SelectedAccounts: codexinspection.NormalizeSelectedAccounts(req.SelectedAccounts),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"run": run})
+	case path == "/v0/management/codex-inspection/runs" && r.Method == http.MethodGet:
+		runs, err := s.store.ListCodexInspectionRuns(r.Context(), 100)
+		if err != nil { writeError(w, http.StatusInternalServerError, err); return }
+		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+	case path == "/v0/management/codex-inspection/runs/latest" && r.Method == http.MethodGet:
+		run, ok, err := s.store.GetLatestCodexInspectionRun(r.Context())
+		if err != nil { writeError(w, http.StatusInternalServerError, err); return }
+		if !ok { writeJSON(w, http.StatusOK, map[string]any{"run": nil}); return }
+		results, _ := s.store.LoadCodexInspectionResults(r.Context(), run.RunID)
+		logs, _ := s.store.LoadCodexInspectionLogs(r.Context(), run.RunID, 5000)
+		writeJSON(w, http.StatusOK, map[string]any{"run": run, "results": results, "logs": logs})
+	case strings.HasPrefix(path, "/v0/management/codex-inspection/runs/") && strings.HasSuffix(path, "/pause") && r.Method == http.MethodPost:
+		runID := strings.TrimSuffix(strings.TrimPrefix(path, "/v0/management/codex-inspection/runs/"), "/pause")
+		s.codex.Stop(runID)
+		now := time.Now().UnixMilli()
+		run, ok, err := s.store.GetCodexInspectionRun(r.Context(), runID)
+		if err == nil && ok { run.Status = string(codexinspection.StatusPaused); run.UpdatedAtMS = now; _ = s.store.SaveCodexInspectionRun(r.Context(), run) }
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case strings.HasPrefix(path, "/v0/management/codex-inspection/runs/") && strings.HasSuffix(path, "/stop") && r.Method == http.MethodPost:
+		runID := strings.TrimSuffix(strings.TrimPrefix(path, "/v0/management/codex-inspection/runs/"), "/stop")
+		s.codex.Stop(runID)
+		now := time.Now().UnixMilli()
+		run, ok, err := s.store.GetCodexInspectionRun(r.Context(), runID)
+		if err == nil && ok { run.Status = string(codexinspection.StatusStopped); run.UpdatedAtMS = now; run.FinishedAtMS = &now; _ = s.store.SaveCodexInspectionRun(r.Context(), run) }
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case strings.HasPrefix(path, "/v0/management/codex-inspection/runs/") && r.Method == http.MethodGet:
+		runID := strings.TrimPrefix(path, "/v0/management/codex-inspection/runs/")
+		run, ok, err := s.store.GetCodexInspectionRun(r.Context(), runID)
+		if err != nil { writeError(w, http.StatusInternalServerError, err); return }
+		if !ok { writeError(w, http.StatusNotFound, errors.New("run not found")); return }
+		results, _ := s.store.LoadCodexInspectionResults(r.Context(), run.RunID)
+		logs, _ := s.store.LoadCodexInspectionLogs(r.Context(), run.RunID, 5000)
+		writeJSON(w, http.StatusOK, map[string]any{"run": run, "results": results, "logs": logs})
+	default:
+		methodNotAllowed(w)
+	}
 }

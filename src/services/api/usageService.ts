@@ -31,6 +31,16 @@ export interface UsageServiceStatus {
   collector?: UsageServiceCollectorStatus;
 }
 
+export interface UsageServiceApiKeyMapItem {
+  apiKeyHash: string;
+  apiKeyLabel: string;
+  apiKeyMasked: string;
+}
+
+export interface UsageServiceApiKeyMapResponse {
+  items: UsageServiceApiKeyMapItem[];
+}
+
 export interface UsageServiceSetupRequest {
   cpaBaseUrl: string;
   managementKey: string;
@@ -138,6 +148,20 @@ export const usageServiceApi = {
       timeout: USAGE_SERVICE_TIMEOUT_MS,
       headers: authHeaders(managementKey),
     });
+    return response.data;
+  },
+
+  getApiKeyMap: async (
+    base: string,
+    managementKey?: string
+  ): Promise<UsageServiceApiKeyMapResponse> => {
+    const response = await axios.get<UsageServiceApiKeyMapResponse>(
+      buildUrl(base, '/v0/management/api-key-map'),
+      {
+        timeout: USAGE_SERVICE_TIMEOUT_MS,
+        headers: authHeaders(managementKey),
+      }
+    );
     return response.data;
   },
 

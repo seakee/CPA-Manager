@@ -55,7 +55,8 @@
     "model_alias_placeholder": "Model alias (optional)",
     "invalid_provider_index": "Invalid provider index.",
     "unsaved_changes_title": "Unsaved changes",
-    "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?"
+    "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?",
+    "detail": "Detail"
   },
   "title": {
     "main": "CLI Proxy API Management Center",
@@ -1190,6 +1191,8 @@
     "clear_account_focus": "Clear Account Focus",
     "account_overview_title": "Account Overview",
     "account_overview_desc": "Realtime account-level totals for calls, success and failure, token structure, and spend, with expandable model cost details and live Codex quota fetches.",
+    "api_key_overview_title": "Client API Key Overview",
+    "api_key_overview_desc": "Break down calls, success and failure, token structure, and spend by CLIProxyAPI top-level api-keys.",
     "codex_inspection_entry": "Codex Account Inspection",
     "codex_inspection_eyebrow": "Codex Account Inspection",
     "codex_inspection_title": "Codex Account Inspection",
@@ -1298,6 +1301,8 @@
     "codex_inspection_logs_clear": "Clear logs",
     "codex_inspection_logs_jump_latest": "Jump to latest",
     "codex_inspection_action_total": "Suggested",
+    "codex_inspection_probe_total": "Probe Set",
+    "codex_inspection_sampled_total": "Sampled This Run",
     "codex_inspection_sampled_meta_running": "Total {{total}} · {{percent}}%",
     "codex_inspection_sampled_meta_done": "Total {{total}} · Completed",
     "codex_inspection_sampled_meta_idle": "Waiting to start",
