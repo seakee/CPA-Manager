@@ -7,6 +7,13 @@
 - Configuration: `custom.quota.displayLimitCount`, default `30` when missing or invalid.
 - Upstream contribution: Possibly, if upstream accepts a generic configurable quota display threshold; current config path is fork-specific.
 
+## Custom release versioning
+
+- Scope: `.github/workflows/release.yml`, `.github/workflows/docker.yml`, `.github/release-notes-template.md`
+- Purpose: Restrict automated releases and Docker version metadata to `v<upstream-version>-custom-<number>` tags instead of commit hashes.
+- Configuration: Push tags like `v1.2.55-custom-1`; invalid tag shapes fail validation before build or publish.
+- Upstream contribution: No. This is fork-specific release/versioning policy.
+
 ## Custom project rules
 
 - Scope: `.claude/rules.md`, `CUSTOM.md`

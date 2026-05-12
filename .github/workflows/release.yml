@@ -3,10 +3,29 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*-custom-*'
 
 jobs:
+  validate-release-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.validate.outputs.should_release }}
+    steps:
+      - name: Validate custom release tag
+        id: validate
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-custom-[0-9]+$ ]]; then
+            echo "::error::Invalid custom release tag: ${tag}"
+            echo "::error::Expected format: v<upstream-version>-custom-<number>, for example v1.2.55-custom-1"
+            exit 1
+          fi
+          echo "should_release=true" >> "${GITHUB_OUTPUT}"
+
   build-and-release:
+    needs: validate-release-tag
+    if: needs.validate-release-tag.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
     permissions:
@@ -54,19 +73,32 @@ jobs:
         run: |
           set -euo pipefail
           current_tag="${GITHUB_REF_NAME}"
-          previous_tag="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${current_tag}$" | head -n 1 || true)"
-          if [ -n "${previous_tag}" ]; then
-            range="${previous_tag}..${current_tag}"
-          else
-            range="${current_tag}"
+          : > release-notes.md
+
+          if [ -f CHANGELOG.md ]; then
+            awk -v tag="${current_tag}" '
+              BEGIN { found = 0 }
+              /^##[[:space:]]+/ {
+                if (found) exit
+                if (index($0, tag) > 0) found = 1
+              }
+              found { print }
+            ' CHANGELOG.md > release-notes.md
           fi
 
-          : > release-notes.md
-          git log --pretty=format:"- %h %s" "${range}" >> release-notes.md
+          if [ ! -s release-notes.md ]; then
+            release_date="$(date -u +%Y-%m-%d)"
+            sed \
+              -e "s/{{TAG}}/${current_tag}/g" \
+              -e "s/{{DATE}}/${release_date}/g" \
+              .github/release-notes-template.md > release-notes.md
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           files: |
             dist/management.html
             dist/native/*

@@ -2,9 +2,14 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches:
-      - custom
+    tags:
+      - 'v*-custom-*'
   workflow_dispatch:
+    inputs:
+      custom_version:
+        description: 'Custom version tag, for example v1.2.55-custom-1'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -17,8 +22,35 @@ env:
   DOCKERHUB_IMAGE: nnnmdzz2/cpa-manager
 
 jobs:
+  validate-custom-version:
+    name: Validate Custom Version
+    runs-on: ubuntu-latest
+    outputs:
+      custom_version: ${{ steps.validate.outputs.custom_version }}
+    steps:
+      - name: Validate custom version
+        id: validate
+        env:
+          CUSTOM_VERSION_INPUT: ${{ inputs.custom_version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            custom_version="${CUSTOM_VERSION_INPUT}"
+          else
+            custom_version="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${custom_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-custom-[0-9]+$ ]]; then
+            echo "::error::Invalid custom version: ${custom_version}"
+            echo "::error::Expected format: v<upstream-version>-custom-<number>, for example v1.2.55-custom-1"
+            exit 1
+          fi
+
+          echo "custom_version=${custom_version}" >> "${GITHUB_OUTPUT}"
+
   frontend-test:
     name: Frontend Test
+    needs: validate-custom-version
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -44,6 +76,7 @@ jobs:
 
   usage-service-test:
     name: Usage Service Test
+    needs: validate-custom-version
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -62,6 +95,7 @@ jobs:
   docker:
     name: Build and Push
     needs:
+      - validate-custom-version
       - frontend-test
       - usage-service-test
     runs-on: ubuntu-latest
@@ -107,8 +141,8 @@ jobs:
           tags: |
             ${{ env.DOCKERHUB_IMAGE }}:latest
             ${{ env.DOCKERHUB_IMAGE }}:custom
-            ${{ env.DOCKERHUB_IMAGE }}:${{ github.sha }}
+            ${{ env.DOCKERHUB_IMAGE }}:${{ needs.validate-custom-version.outputs.custom_version }}
           build-args: |
-            VERSION=custom-${{ github.sha }}
+            VERSION=${{ needs.validate-custom-version.outputs.custom_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
