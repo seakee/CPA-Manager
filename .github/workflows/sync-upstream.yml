@@ -1,0 +1,85 @@
+name: Sync upstream and merge to custom
+
+on:
+  schedule:
+    # 20:00 UTC daily = 04:00 Beijing time
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote and fetch
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/seakee/CPA-Manager.git
+          git fetch upstream main
+          git fetch origin main custom
+
+      - name: Sync main with upstream/main
+        id: sync_main
+        run: |
+          set -euo pipefail
+          git checkout -B main origin/main
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse upstream/main)" ]; then
+            echo "main already at upstream/main; nothing to push"
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git reset --hard upstream/main
+          git push origin main --force-with-lease
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Merge main into custom
+        id: merge_custom
+        run: |
+          set -euo pipefail
+          git checkout -B custom origin/custom
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "custom already contains origin/main; nothing to merge"
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git merge --no-edit origin/main; then
+            echo "::error::Merge conflict between origin/main and custom. Workflow will not auto-resolve. See MAINTENANCE.md for the manual resolution flow."
+            git merge --abort || true
+            exit 1
+          fi
+          git push origin custom
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger Docker build on custom
+        if: steps.merge_custom.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run docker.yml --ref custom
+          echo "Dispatched 'Build and Push Docker Image' on custom."
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Sync result"
+            echo "- main updated: ${{ steps.sync_main.outputs.updated }}"
+            echo "- custom updated: ${{ steps.merge_custom.outputs.updated }}"
+          } >> "$GITHUB_STEP_SUMMARY"

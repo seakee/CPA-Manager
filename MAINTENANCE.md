@@ -33,9 +33,26 @@ git remote add upstream https://github.com/seakee/CPA-Manager.git
 
 > Never `git push upstream` — it will be rejected, but it is also a footgun. Only `git fetch upstream`.
 
-## Sync Workflow (default: merge)
+## Sync Workflow
 
-Run this whenever upstream has new commits you want to pick up.
+Upstream sync runs **automatically** via [`.github/workflows/sync-upstream.yml`](./.github/workflows/sync-upstream.yml). You only run the manual flow below when the auto sync fails due to a merge conflict.
+
+### Automatic schedule
+
+- **Cron:** daily at `0 20 * * *` UTC (= **04:00 Beijing time**)
+- **Manual trigger:** GitHub → Actions → **Sync upstream and merge to custom** → **Run workflow** (`workflow_dispatch`)
+
+### What the auto-sync does
+
+1. Fetch `upstream/main`.
+2. Hard-reset `main` to `upstream/main` and push with `--force-with-lease`.
+3. Merge `origin/main` into `custom` (default merge, no rebase, no auto-conflict-resolution).
+4. On clean merge: push `custom` and explicitly dispatch `docker.yml` to publish a new image.
+5. On merge conflict: abort the merge, fail the workflow loudly, **do not touch `custom`**.
+
+The workflow only force-pushes `main` (which is treated as a mirror). `custom` is never force-pushed by automation.
+
+### Manual flow (use when auto-sync fails)
 
 ```bash
 # 1. Update main to match upstream exactly
@@ -46,16 +63,29 @@ git push origin main --force-with-lease
 
 # 2. Bring upstream changes into custom
 git checkout custom
+git pull origin custom
 git merge main
-# resolve conflicts if any, then:
+# resolve conflicts in your editor, then:
+git add .
+git commit
 git push origin custom
 ```
+
+The push to `custom` will trigger the Docker workflow as usual.
 
 `--force-with-lease` is safer than `--force`: it refuses to push if `origin/main` was updated by someone else in the meantime.
 
 ### Why merge instead of rebase
 
 Merging keeps `custom` history honest — every upstream sync is one merge commit, easy to revert with `git revert -m 1 <merge-sha>`. Rebase rewrites your customs on top of upstream, which produces a cleaner log but breaks any open feature branches and makes rollback messy. Use rebase only when `custom` has zero published descendants.
+
+### Workflow loop safety
+
+No infinite loop is possible:
+
+- `sync-upstream.yml` only triggers on `schedule` / `workflow_dispatch` — never on `push`, so syncing the repo can't re-trigger itself.
+- `docker.yml` only triggers on `push: branches: [custom]` / `workflow_dispatch` — never on `schedule`, so it can't run sync.
+- Pushes made by `sync-upstream.yml` use the workflow's `GITHUB_TOKEN`. GitHub Actions deliberately **does not** fire downstream `push`-triggered workflows from `GITHUB_TOKEN` pushes (built-in loop protection). Therefore `sync-upstream.yml` ends with an explicit `gh workflow run docker.yml --ref custom` call when (and only when) `custom` was actually advanced.
 
 ## Adding a Custom Change
 
