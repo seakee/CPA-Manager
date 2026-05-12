@@ -72,7 +72,7 @@ Once merged into `custom`, the Docker workflow will publish a new image automati
 
 ## Docker Image
 
-- **Image:** [`nnnmdzz/cpa-manager`](https://hub.docker.com/r/nnnmdzz/cpa-manager)
+- **Image:** [`nnnmdzz2/cpa-manager`](https://hub.docker.com/r/nnnmdzz2/cpa-manager)
 - **Architectures:** `linux/amd64`, `linux/arm64`
 - **Built from:** [`Dockerfile.usage-service`](./Dockerfile.usage-service)
 
@@ -95,7 +95,7 @@ Settings → Secrets and variables → Actions → New repository secret:
 
 | Name | Value |
 | --- | --- |
-| `DOCKERHUB_USERNAME` | Your Docker Hub login (e.g. `nnnmdzz`) |
+| `DOCKERHUB_USERNAME` | Your Docker Hub login (e.g. `nnnmdzz2`) |
 | `DOCKERHUB_TOKEN` | Docker Hub access token with **Read, Write, Delete** scope on the `cpa-manager` repo. Create at https://hub.docker.com/settings/security |
 
 The workflow validates both secrets exist before attempting login. Docker tokens are passed via `docker/login-action`, which masks them in logs — never `echo` them yourself.
@@ -104,19 +104,19 @@ The workflow validates both secrets exist before attempting login. Docker tokens
 
 ```bash
 # Pull latest
-docker pull nnnmdzz/cpa-manager:latest
+docker pull nnnmdzz2/cpa-manager:latest
 
 # Run
 docker run -d --name cpa-manager \
   -p 18317:18317 \
   -v cpa-manager-data:/data \
-  nnnmdzz/cpa-manager:latest
+  nnnmdzz2/cpa-manager:latest
 
 # Pin to a specific build
-docker pull nnnmdzz/cpa-manager:<git-sha>
+docker pull nnnmdzz2/cpa-manager:<git-sha>
 ```
 
-For docker-compose, change the `image:` line in `docker-compose.usage.yml` from `seakee/cpa-manager:latest` to `nnnmdzz/cpa-manager:latest`.
+For docker-compose, change the `image:` line in `docker-compose.usage.yml` from `seakee/cpa-manager:latest` to `nnnmdzz2/cpa-manager:latest`.
 
 ### Local manual build
 
@@ -124,7 +124,7 @@ For docker-compose, change the `image:` line in `docker-compose.usage.yml` from 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f Dockerfile.usage-service \
-  -t nnnmdzz/cpa-manager:dev \
+  -t nnnmdzz2/cpa-manager:dev \
   --build-arg VERSION=dev-local \
   .
 ```
@@ -135,9 +135,9 @@ docker buildx build \
 
 ```bash
 # Find the previous good SHA in GitHub Actions history, then:
-docker pull nnnmdzz/cpa-manager:<previous-sha>
-docker tag nnnmdzz/cpa-manager:<previous-sha> nnnmdzz/cpa-manager:latest
-docker push nnnmdzz/cpa-manager:latest
+docker pull nnnmdzz2/cpa-manager:<previous-sha>
+docker tag nnnmdzz2/cpa-manager:<previous-sha> nnnmdzz2/cpa-manager:latest
+docker push nnnmdzz2/cpa-manager:latest
 ```
 
 ### Revert a bad upstream merge

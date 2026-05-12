@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DOCKERHUB_IMAGE: nnnmdzz/cpa-manager
+  DOCKERHUB_IMAGE: nnnmdzz2/cpa-manager
 
 jobs:
   frontend-test:
