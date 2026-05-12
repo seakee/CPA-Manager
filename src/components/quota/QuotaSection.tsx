@@ -26,7 +26,6 @@ type QuotaSetter<T> = (updater: QuotaUpdater<T>) => void;
 type ViewMode = 'paged' | 'all';
 
 const MAX_ITEMS_PER_PAGE = 25;
-const MAX_SHOW_ALL_THRESHOLD = 30;
 
 const stringifySearchValue = (value: unknown): string[] => {
   if (value === undefined || value === null) return [];
@@ -107,6 +106,7 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   files: AuthFileItem[];
   loading: boolean;
   disabled: boolean;
+  custom_displayLimitCount: number;
   searchQuery?: string;
   sortMode?: QuotaSortMode;
 }
@@ -116,6 +116,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   files,
   loading,
   disabled,
+  custom_displayLimitCount,
   searchQuery = '',
   sortMode = 'default'
 }: QuotaSectionProps<TState, TData>) {
@@ -192,7 +193,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     return sortedFiles;
   }, [config, filteredFiles, normalizedSearchQuery, quota, sortMode, t]);
 
-  const showAllAllowed = displayFiles.length <= MAX_SHOW_ALL_THRESHOLD;
+  const showAllAllowed = displayFiles.length <= custom_displayLimitCount;
   const effectiveViewMode: ViewMode = viewMode === 'all' && !showAllAllowed ? 'paged' : viewMode;
 
   const {
@@ -343,7 +344,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                 effectiveViewMode === 'all' ? styles.viewModeButtonActive : ''
               }`}
               onClick={() => {
-                if (displayFiles.length > MAX_SHOW_ALL_THRESHOLD) {
+                if (displayFiles.length > custom_displayLimitCount) {
                   setShowTooManyWarning(true);
                 } else {
                   setViewMode('all');

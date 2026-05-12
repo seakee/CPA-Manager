@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { parseDocument } from 'yaml';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
@@ -22,6 +23,18 @@ import type { QuotaSortMode } from '@/components/quota/quotaConfigs';
 import type { AuthFileItem } from '@/types';
 import styles from './QuotaPage.module.scss';
 
+const custom_DEFAULT_QUOTA_DISPLAY_LIMIT_COUNT = 30;
+const custom_QUOTA_DISPLAY_LIMIT_PATH = ['custom', 'quota', 'displayLimitCount'];
+
+function custom_readQuotaDisplayLimitCount(yamlContent: string): number {
+  const doc = parseDocument(yamlContent);
+  if (doc.errors.length > 0) return custom_DEFAULT_QUOTA_DISPLAY_LIMIT_COUNT;
+
+  const value = doc.getIn(custom_QUOTA_DISPLAY_LIMIT_PATH);
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1) return value;
+  return custom_DEFAULT_QUOTA_DISPLAY_LIMIT_COUNT;
+}
+
 export function QuotaPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
@@ -31,6 +44,9 @@ export function QuotaPage() {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<QuotaSortMode>('default');
+  const [custom_displayLimitCount, custom_setDisplayLimitCount] = useState(
+    custom_DEFAULT_QUOTA_DISPLAY_LIMIT_COUNT
+  );
 
   const disableControls = connectionStatus !== 'connected';
   const sortOptions = useMemo(
@@ -45,7 +61,8 @@ export function QuotaPage() {
 
   const loadConfig = useCallback(async () => {
     try {
-      await configFileApi.fetchConfigYaml();
+      const yamlContent = await configFileApi.fetchConfigYaml();
+      custom_setDisplayLimitCount(custom_readQuotaDisplayLimitCount(yamlContent));
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : t('notification.refresh_failed');
       setError((prev) => prev || errorMessage);
@@ -117,6 +134,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        custom_displayLimitCount={custom_displayLimitCount}
         searchQuery={searchQuery}
         sortMode={sortMode}
       />
@@ -125,6 +143,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        custom_displayLimitCount={custom_displayLimitCount}
         searchQuery={searchQuery}
         sortMode={sortMode}
       />
@@ -133,6 +152,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        custom_displayLimitCount={custom_displayLimitCount}
         searchQuery={searchQuery}
         sortMode={sortMode}
       />
@@ -141,6 +161,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        custom_displayLimitCount={custom_displayLimitCount}
         searchQuery={searchQuery}
         sortMode={sortMode}
       />
@@ -149,6 +170,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        custom_displayLimitCount={custom_displayLimitCount}
         searchQuery={searchQuery}
         sortMode={sortMode}
       />
