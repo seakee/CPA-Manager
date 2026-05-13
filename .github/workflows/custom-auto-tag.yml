@@ -1,0 +1,62 @@
+name: Create Custom Release Tag
+
+on:
+  push:
+    branches:
+      - custom
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-custom-tag:
+    name: Create Custom Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create next custom tag
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_NAME}" != "custom" ]; then
+            echo "::error::Custom release tags can only be created from the custom branch"
+            exit 1
+          fi
+
+          git fetch --force --tags origin
+
+          upstream_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          if [ -z "${upstream_tag}" ]; then
+            echo "::error::No upstream version tag found. Expected tags like v1.2.55."
+            exit 1
+          fi
+
+          existing_tag="$(git tag --points-at "${GITHUB_SHA}" --list "${upstream_tag}-custom-*" | sort -V | tail -n 1 || true)"
+          if [ -n "${existing_tag}" ]; then
+            echo "Commit ${GITHUB_SHA} is already tagged as ${existing_tag}; skipping."
+            exit 0
+          fi
+
+          latest_custom_number="$(git tag --list "${upstream_tag}-custom-*" | awk -F '-custom-' '{print $2}' | grep -E '^[0-9]+$' | sort -n | tail -n 1 || true)"
+          if [ -z "${latest_custom_number}" ]; then
+            next_custom_number=1
+          else
+            next_custom_number=$((latest_custom_number + 1))
+          fi
+
+          custom_tag="${upstream_tag}-custom-${next_custom_number}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${custom_tag}" -m "Custom release ${custom_tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${custom_tag}"
+          echo "Created ${custom_tag} for ${GITHUB_SHA}."
