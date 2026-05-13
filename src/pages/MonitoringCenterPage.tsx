@@ -84,6 +84,7 @@ import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPane
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useInterval } from '@/hooks/useInterval';
+import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
 import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import type {
@@ -1234,10 +1235,24 @@ function AccountQuotaPanel({
     </button>
   );
 
-  const renderStateMessage = (message: ReactNode, hint?: ReactNode) => (
+  const renderStateMessage = (message: ReactNode, hint?: ReactNode, retry = false) => (
     <div className={styles.quotaStateMessage}>
       <span>{message}</span>
       {hint ? <small>{hint}</small> : null}
+      {retry ? (
+        <button
+          type="button"
+          className={styles.quotaRetryButton}
+          onClick={onRefreshQuota}
+          disabled={quotaLoading}
+        >
+          <IconRefreshCw
+            size={14}
+            className={quotaLoading ? styles.refreshIconSpinning : styles.refreshIcon}
+          />
+          <span>{t('codex_quota.retry_button')}</span>
+        </button>
+      ) : null}
     </div>
   );
 
@@ -1259,7 +1274,9 @@ function AccountQuotaPanel({
         ? renderStateMessage(
             t('codex_quota.load_failed', {
               message: quotaState.error || t('common.unknown_error'),
-            })
+            }),
+            undefined,
+            true
           )
         : null}
 
@@ -1273,7 +1290,11 @@ function AccountQuotaPanel({
 
       {singleQuotaEntry ? (
         singleQuotaEntry.error ? (
-          renderStateMessage(t('codex_quota.load_failed', { message: singleQuotaEntry.error }))
+          renderStateMessage(
+            t('codex_quota.load_failed', { message: singleQuotaEntry.error }),
+            undefined,
+            true
+          )
         ) : singleQuotaEntry.windows.length > 0 ? (
           renderQuotaWindows(singleQuotaEntry.windows)
         ) : (
@@ -1295,7 +1316,11 @@ function AccountQuotaPanel({
                 </div>
 
                 {entry.error
-                  ? renderStateMessage(t('codex_quota.load_failed', { message: entry.error }))
+                  ? renderStateMessage(
+                      t('codex_quota.load_failed', { message: entry.error }),
+                      undefined,
+                      true
+                    )
                   : entry.windows.length > 0
                     ? renderQuotaWindows(entry.windows)
                     : renderStateMessage(t('codex_quota.empty_windows'), t('codex_quota.idle'))}
@@ -1877,6 +1902,7 @@ export function MonitoringCenterPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
+  const requestMonitoringAvailability = useRequestMonitoringAvailability();
   const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
   const [customStartInput, setCustomStartInput] = useState(getTodayStartInputValue);
   const [customEndInput, setCustomEndInput] = useState(getCurrentInputValue);
@@ -2031,8 +2057,22 @@ export function MonitoringCenterPage() {
     connectionStatus === 'connected' && Number(autoRefreshMs) > 0 ? Number(autoRefreshMs) : null
   );
 
-  const overallLoading = usageLoading || monitoringLoading;
-  const combinedError = [usageError, monitoringError].filter(Boolean).join('；');
+  const monitoringUnavailable =
+    !requestMonitoringAvailability.checking && !requestMonitoringAvailability.available;
+  const monitoringUnavailableTitle =
+    requestMonitoringAvailability.reason === 'monitoring_disabled'
+      ? t('monitoring.request_monitoring_disabled_title')
+      : t('monitoring.request_monitoring_unavailable_title');
+  const monitoringUnavailableBody =
+    requestMonitoringAvailability.reason === 'monitoring_disabled'
+      ? t('monitoring.request_monitoring_disabled_body')
+      : requestMonitoringAvailability.reason === 'service_unavailable'
+        ? t('monitoring.request_monitoring_service_unavailable_body')
+        : t('monitoring.request_monitoring_not_configured_body');
+  const overallLoading = usageLoading || monitoringLoading || requestMonitoringAvailability.checking;
+  const combinedError = monitoringUnavailable
+    ? monitoringError
+    : [usageError, monitoringError].filter(Boolean).join('；');
   const hasPrices = Object.keys(modelPrices).length > 0;
 
   useEffect(() => {
@@ -2271,6 +2311,13 @@ export function MonitoringCenterPage() {
   );
 
   const hasSearchFilter = Boolean(deferredSearch.trim());
+  const hasScopeFilter =
+    selectedAccount !== 'all' ||
+    selectedProvider !== 'all' ||
+    selectedModel !== 'all' ||
+    selectedChannel !== 'all' ||
+    selectedStatus !== 'all';
+  const hasActiveDataFilter = hasSearchFilter || hasScopeFilter;
   const failedGroupCount = groupedRealtimeRows.filter((row) => row.failureCalls > 0).length;
   const failedOnlyActive = selectedStatus === 'failed';
   const connectionTone: MonitoringStatusTone =
@@ -2421,6 +2468,15 @@ export function MonitoringCenterPage() {
     setSelectedChannel('all');
     setSelectedStatus('all');
   }, []);
+
+  const renderMonitoringEmptyState = () => (
+    <div className={styles.emptyTable}>
+      <strong>
+        {hasActiveDataFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
+      </strong>
+      {!hasActiveDataFilter ? <span>{t('monitoring.empty_diagnostics_body')}</span> : null}
+    </div>
+  );
 
   const openCustomRangeModal = useCallback(() => {
     setCustomDraftStartInput(customStartInput || getTodayStartInputValue());
@@ -2927,6 +2983,20 @@ export function MonitoringCenterPage() {
         </div>
       </div>
 
+      {monitoringUnavailable ? (
+        <div className={styles.callout}>
+          <strong>{monitoringUnavailableTitle}</strong>
+          <span>{monitoringUnavailableBody}</span>
+          <Link
+            to="/config"
+            className={styles.configLink}
+            onClick={() => localStorage.setItem('config-management:tab', 'manager')}
+          >
+            {t('monitoring.open_manager_config')}
+          </Link>
+        </div>
+      ) : null}
+
       <section className={styles.actionBar} aria-label={t('common.action')}>
         <div className={styles.actionGroup}>
           <button
@@ -3379,11 +3449,7 @@ export function MonitoringCenterPage() {
                 {sortedAccountRows.length === 0 ? (
                   <tr>
                     <td colSpan={accountOverviewColumns.length}>
-                      <div className={styles.emptyTable}>
-                        {hasSearchFilter
-                          ? t('monitoring.no_filtered_data')
-                          : t('monitoring.no_data')}
-                      </div>
+                      {renderMonitoringEmptyState()}
                     </td>
                   </tr>
                 ) : null}
@@ -3418,9 +3484,7 @@ export function MonitoringCenterPage() {
             })}
           </div>
         ) : (
-          <div className={styles.emptyTable}>
-            {hasSearchFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
-          </div>
+          renderMonitoringEmptyState()
         )}
         <PaginationControls
           count={sortedAccountRows.length}
@@ -3549,9 +3613,7 @@ export function MonitoringCenterPage() {
               {realtimeLogRows.length === 0 ? (
                 <tr>
                   <td colSpan={10}>
-                    <div className={styles.emptyTable}>
-                      {hasSearchFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
-                    </div>
+                    {renderMonitoringEmptyState()}
                   </td>
                 </tr>
               ) : null}

@@ -8,8 +8,14 @@ import { formatFileSize } from '@/utils/format';
 import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
 import {
+  convertAuthJsonInput,
+  getDefaultSessionAuthFileName,
+  type AuthJsonInputType,
+} from '@/features/authFiles/sessionAuthConverter';
+import {
   getTypeLabel,
   hasAuthFileStatusMessage,
+  isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
 } from '@/features/authFiles/constants';
 
@@ -17,9 +23,11 @@ type DeleteAllOptions = {
   filter: string;
   problemOnly: boolean;
   disabledOnly: boolean;
+  healthyOnly: boolean;
   onResetFilterToAll: () => void;
   onResetProblemOnly: () => void;
   onResetDisabledOnly: () => void;
+  onResetHealthyOnly: () => void;
 };
 
 export type UseAuthFilesDataResult = {
@@ -29,14 +37,20 @@ export type UseAuthFilesDataResult = {
   loading: boolean;
   error: string;
   uploading: boolean;
+  authJsonPasteSaving: boolean;
   deleting: string | null;
   deletingAll: boolean;
   statusUpdating: Record<string, boolean>;
   batchStatusUpdating: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
-  loadFiles: () => Promise<void>;
+  loadFiles: (options?: { throwOnError?: boolean }) => Promise<void>;
   handleUploadClick: () => void;
   handleFileChange: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  savePastedAuthJson: (
+    type: AuthJsonInputType,
+    fileName: string,
+    jsonText: string
+  ) => Promise<string>;
   handleDelete: (name: string) => void;
   handleDeleteAll: (options: DeleteAllOptions) => void;
   handleDownload: (name: string) => Promise<void>;
@@ -50,6 +64,27 @@ export type UseAuthFilesDataResult = {
   batchDelete: (names: string[]) => void;
 };
 
+type PastedAuthJsonPayload = {
+  authJson: Record<string, unknown>;
+  resolvedFileName: string;
+};
+
+export const buildPastedAuthJsonPayload = (
+  type: AuthJsonInputType,
+  fileName: string,
+  jsonText: string
+): PastedAuthJsonPayload => {
+  const authJson = convertAuthJsonInput(jsonText, type);
+  const resolvedFileName =
+    type === 'session' && fileName === 'codex-account.json'
+      ? getDefaultSessionAuthFileName(authJson)
+      : fileName;
+  return {
+    authJson,
+    resolvedFileName,
+  };
+};
+
 export function useAuthFilesData(): UseAuthFilesDataResult {
   const { t } = useTranslation();
   const { showNotification, showConfirmation } = useNotificationStore();
@@ -58,6 +93,8 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [authJsonPasteSaving, setAuthJsonPasteSaving] = useState(false);
+  const authJsonPasteSavingRef = useRef(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
@@ -158,7 +195,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     });
   }, [files, selectedFiles.size]);
 
-  const loadFiles = useCallback(async () => {
+  const loadFiles = useCallback(async (options?: { throwOnError?: boolean }) => {
     setLoading(true);
     setError('');
     try {
@@ -167,6 +204,9 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : t('notification.refresh_failed');
       setError(errorMessage);
+      if (options?.throwOnError) {
+        throw (err instanceof Error ? err : new Error(errorMessage));
+      }
     } finally {
       setLoading(false);
     }
@@ -244,6 +284,41 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     [loadFiles, showNotification, t]
   );
 
+  const savePastedAuthJson = useCallback(
+    async (type: AuthJsonInputType, fileName: string, jsonText: string) => {
+      if (authJsonPasteSavingRef.current) {
+        throw new Error(t('auth_files.paste_error_save_in_progress'));
+      }
+      authJsonPasteSavingRef.current = true;
+      setAuthJsonPasteSaving(true);
+      try {
+        const { authJson, resolvedFileName } = buildPastedAuthJsonPayload(type, fileName, jsonText);
+        try {
+          await authFilesApi.saveJsonObject(resolvedFileName, authJson);
+        } catch {
+          throw new Error(t('notification.save_failed'));
+        }
+        try {
+          await loadFiles({ throwOnError: true });
+        } catch (reloadError) {
+          const reloadMessage =
+            reloadError instanceof Error ? reloadError.message : t('notification.refresh_failed');
+          showNotification(t('auth_files.paste_success', { name: resolvedFileName }), 'success');
+          showNotification(`${t('notification.refresh_failed')}: ${reloadMessage}`, 'warning');
+          return resolvedFileName;
+        }
+        showNotification(t('auth_files.paste_success', { name: resolvedFileName }), 'success');
+        return resolvedFileName;
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : t('notification.save_failed'));
+      } finally {
+        authJsonPasteSavingRef.current = false;
+        setAuthJsonPasteSaving(false);
+      }
+    },
+    [loadFiles, showNotification, t]
+  );
+
   const handleDelete = useCallback(
     (name: string) => {
       showConfirmation({
@@ -275,16 +350,19 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
         filter,
         problemOnly,
         disabledOnly,
+        healthyOnly,
         onResetFilterToAll,
         onResetProblemOnly,
         onResetDisabledOnly,
+        onResetHealthyOnly,
       } = deleteAllOptions;
       const isFiltered = filter !== 'all';
       const isProblemOnly = problemOnly === true;
       const isDisabledOnly = disabledOnly === true;
+      const isHealthyOnly = healthyOnly === true;
       const typeLabel = isFiltered ? getTypeLabel(t, filter) : t('auth_files.filter_all');
       let confirmMessage = t('auth_files.delete_all_confirm');
-      if (isDisabledOnly) {
+      if (isDisabledOnly || isHealthyOnly) {
         confirmMessage = t('auth_files.delete_filtered_result_confirm');
       } else if (isProblemOnly) {
         confirmMessage = isFiltered
@@ -302,7 +380,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
         onConfirm: async () => {
           setDeletingAll(true);
           try {
-            if (!isFiltered && !isProblemOnly && !isDisabledOnly) {
+            if (!isFiltered && !isProblemOnly && !isDisabledOnly && !isHealthyOnly) {
               await authFilesApi.deleteAll();
               showNotification(t('auth_files.delete_all_success'), 'success');
               setFiles((prev) => prev.filter((file) => isRuntimeOnlyAuthFile(file)));
@@ -313,12 +391,13 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
                 if (isFiltered && file.type !== filter) return false;
                 if (isProblemOnly && !hasAuthFileStatusMessage(file)) return false;
                 if (isDisabledOnly && file.disabled !== true) return false;
+                if (isHealthyOnly && !isHealthyAuthFile(file)) return false;
                 return true;
               });
 
               if (filesToDelete.length === 0) {
                 let emptyMessage = t('auth_files.delete_filtered_none', { type: typeLabel });
-                if (isDisabledOnly) {
+                if (isDisabledOnly || isHealthyOnly) {
                   emptyMessage = t('auth_files.delete_filtered_result_none');
                 } else if (isProblemOnly) {
                   emptyMessage = isFiltered
@@ -338,7 +417,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
 
               applyDeletedFiles(result.files);
 
-              if (failed === 0 && isDisabledOnly) {
+              if (failed === 0 && (isDisabledOnly || isHealthyOnly)) {
                 showNotification(
                   t('auth_files.delete_filtered_result_success', { count: success }),
                   'success'
@@ -358,7 +437,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
                   t('auth_files.delete_filtered_success', { count: success, type: typeLabel }),
                   'success'
                 );
-              } else if (isDisabledOnly) {
+              } else if (isDisabledOnly || isHealthyOnly) {
                 showNotification(
                   t('auth_files.delete_filtered_result_partial', { success, failed }),
                   'warning'
@@ -389,6 +468,9 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
               }
               if (isDisabledOnly) {
                 onResetDisabledOnly();
+              }
+              if (isHealthyOnly) {
+                onResetHealthyOnly();
               }
             }
           } catch (err: unknown) {
@@ -635,6 +717,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     loading,
     error,
     uploading,
+    authJsonPasteSaving,
     deleting,
     deletingAll,
     statusUpdating,
@@ -643,6 +726,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     loadFiles,
     handleUploadClick,
     handleFileChange,
+    savePastedAuthJson,
     handleDelete,
     handleDeleteAll,
     handleDownload,
