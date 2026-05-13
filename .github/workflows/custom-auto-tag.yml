@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 env:
   UPSTREAM_REPOSITORY: seakee/CPA-Manager
@@ -20,6 +21,9 @@ jobs:
   create-custom-tag:
     name: Create Custom Tag
     runs-on: ubuntu-latest
+    outputs:
+      custom_tag: ${{ steps.tag.outputs.custom_tag }}
+      skipped: ${{ steps.tag.outputs.skipped }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,6 +32,7 @@ jobs:
           fetch-tags: true
 
       - name: Create next custom tag
+        id: tag
         run: |
           set -euo pipefail
 
@@ -49,6 +54,8 @@ jobs:
           existing_tag="$(git tag --points-at "${GITHUB_SHA}" --list "${upstream_tag}-custom-*" | sort -V | tail -n 1 || true)"
           if [ -n "${existing_tag}" ]; then
             echo "Commit ${GITHUB_SHA} is already tagged as ${existing_tag}; skipping."
+            echo "skipped=true" >> "${GITHUB_OUTPUT}"
+            echo "custom_tag=${existing_tag}" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
@@ -65,3 +72,30 @@ jobs:
           git tag -a "${custom_tag}" -m "Custom release ${custom_tag}" "${GITHUB_SHA}"
           git push origin "refs/tags/${custom_tag}"
           echo "Created ${custom_tag} for ${GITHUB_SHA}."
+          echo "skipped=false" >> "${GITHUB_OUTPUT}"
+          echo "custom_tag=${custom_tag}" >> "${GITHUB_OUTPUT}"
+
+  dispatch-release:
+    name: Dispatch Release Workflows
+    needs: create-custom-tag
+    if: needs.create-custom-tag.outputs.skipped == 'false'
+    runs-on: ubuntu-latest
+    env:
+      CUSTOM_TAG: ${{ needs.create-custom-tag.outputs.custom_tag }}
+    steps:
+      - name: Trigger Build and Release
+        run: |
+          gh workflow run release.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${CUSTOM_TAG}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Build and Push Docker Image
+        run: |
+          gh workflow run docker.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${CUSTOM_TAG}" \
+            -f custom_version="${CUSTOM_TAG}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
