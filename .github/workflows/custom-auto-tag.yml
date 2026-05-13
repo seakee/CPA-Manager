@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  UPSTREAM_REPOSITORY: seakee/CPA-Manager
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -34,6 +37,8 @@ jobs:
           fi
 
           git fetch --force --tags origin
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --force upstream '+refs/tags/v*:refs/tags/v*'
 
           upstream_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
           if [ -z "${upstream_tag}" ]; then
