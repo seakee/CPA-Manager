@@ -1410,6 +1410,8 @@
     "codex_inspection_sampled_meta_idle": "Waiting to start",
     "account_quota_empty": "No queryable Codex quota is available for this account.",
     "account_quota_reset_at": "Reset At",
+    "provider_detail": "{{provider}} provider",
+    "provider_detail_with_address": "{{provider}} provider · Address: {{baseUrl}}",
     "realtime_table_title": "Realtime Monitor Table",
     "realtime_table_desc": "Show individual call logs in realtime with model, channel, status, latency, usage, and cost so request changes are visible immediately.",
     "model_pricing_desc": "Maintain model pricing directly on the monitoring page and update account, model, and live-log spend instantly.",

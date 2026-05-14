@@ -23,6 +23,7 @@ export interface UsageTokens {
 export interface UsageDetail {
   timestamp: string;
   source: string;
+  alias?: string;
   auth_index: string | number | null;
   api_key_hash?: string;
   apiKeyHash?: string;
@@ -262,6 +263,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
         details.push({
           timestamp,
           source: normalizeSourceWithCache(sourceCache, detailRaw.source),
+          alias: readDetailString(detailRaw.alias),
           auth_index: (detailRaw.auth_index ??
             detailRaw.authIndex ??
             detailRaw.AuthIndex ??
@@ -328,6 +330,7 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
         details.push({
           timestamp,
           source: normalizeSourceWithCache(sourceCache, detailRaw.source),
+          alias: readDetailString(detailRaw.alias),
           auth_index: (detailRaw.auth_index ??
             detailRaw.authIndex ??
             detailRaw.AuthIndex ??

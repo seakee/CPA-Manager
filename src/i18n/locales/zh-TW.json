@@ -1435,6 +1435,8 @@
     "codex_inspection_sampled_meta_idle": "等待開始",
     "account_quota_empty": "目前帳號沒有可查詢的 Codex 配額。",
     "account_quota_reset_at": "重置時間",
+    "provider_detail": "{{provider}} 提供商",
+    "provider_detail_with_address": "{{provider}} 提供商 地址：{{baseUrl}}",
     "realtime_table_title": "即時監控表",
     "realtime_table_desc": "按單次呼叫日誌即時展示模型、渠道、狀態、耗時、用量與花費，持續追蹤請求波動。",
     "model_pricing_desc": "直接在監控頁維護模型單價，帳號、模型與即時日誌花費會立即聯動更新。",

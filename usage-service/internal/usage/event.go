@@ -16,6 +16,7 @@ type Event struct {
 	EventHash            string `json:"event_hash"`
 	TimestampMS          int64  `json:"timestamp_ms"`
 	Timestamp            string `json:"timestamp"`
+	Alias                string `json:"alias,omitempty"`
 	Provider             string `json:"provider,omitempty"`
 	Model                string `json:"model"`
 	Endpoint             string `json:"endpoint,omitempty"`
@@ -55,6 +56,7 @@ type Tokens struct {
 type Detail struct {
 	Timestamp            string `json:"timestamp"`
 	Source               string `json:"source"`
+	Alias                string `json:"alias,omitempty"`
 	AuthIndex            string `json:"auth_index,omitempty"`
 	APIKeyHash           string `json:"api_key_hash,omitempty"`
 	AccountSnapshot      string `json:"account_snapshot,omitempty"`
@@ -137,6 +139,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		Timestamp:            timestamp,
 		Provider:             readString(record, "provider", "type", "auth_type", "authType"),
 		Model:                readString(record, "model", "model_name", "modelName"),
+		Alias:                readString(record, "alias"),
 		Endpoint:             endpoint,
 		Method:               method,
 		Path:                 path,
@@ -200,6 +203,7 @@ func BuildPayload(events []Event) Payload {
 		modelEntry.Details = append(modelEntry.Details, Detail{
 			Timestamp:            event.Timestamp,
 			Source:               event.Source,
+			Alias:                firstNonEmpty(event.Alias, AliasFromRawJSON(event.RawJSON)),
 			AuthIndex:            event.AuthIndex,
 			APIKeyHash:           event.APIKeyHash,
 			AccountSnapshot:      event.AccountSnapshot,
@@ -220,6 +224,26 @@ func BuildPayload(events []Event) Payload {
 		})
 	}
 	return payload
+}
+
+func AliasFromRawJSON(rawJSON string) string {
+	if strings.TrimSpace(rawJSON) == "" {
+		return ""
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &record); err != nil {
+		return ""
+	}
+	return readString(record, "alias")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func readTimestamp(record map[string]any) (int64, string) {

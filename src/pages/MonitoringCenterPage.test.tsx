@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { TFunction } from 'i18next';
 import { AccountExpandedDetails, AccountOverviewCard } from './MonitoringCenterPage';
 import { buildEmptyMonitoringStatusData } from '@/features/monitoring/accountOverviewState';
+import { buildRealtimeLogRows } from '@/features/monitoring/realtimeLogRows';
+import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const copy: Record<string, string> = {
@@ -62,6 +64,102 @@ const t = ((key: string, options?: Record<string, unknown>) => {
   return value;
 }) as TFunction;
 
+const createMonitoringEventRow = (
+  overrides: Partial<MonitoringEventRow> = {}
+): MonitoringEventRow => ({
+  id: overrides.id ?? 'row-1',
+  timestamp: overrides.timestamp ?? '2026-05-09T01:12:43.000Z',
+  timestampMs: overrides.timestampMs ?? Date.parse('2026-05-09T01:12:43.000Z'),
+  dayKey: overrides.dayKey ?? '2026-05-09',
+  hourLabel: overrides.hourLabel ?? '01:00',
+  model: overrides.model ?? 'gpt-5.5',
+  endpoint: overrides.endpoint ?? 'POST /v1/responses',
+  endpointMethod: overrides.endpointMethod ?? 'POST',
+  endpointPath: overrides.endpointPath ?? '/v1/responses',
+  sourceKey: overrides.sourceKey ?? 'codex:0',
+  source: overrides.source ?? 'm:m:******ca',
+  sourceMasked: overrides.sourceMasked ?? 'm:m:******ca',
+  account: overrides.account ?? 'm:m:******ca',
+  accountMasked: overrides.accountMasked ?? 'm:m:******ca',
+  authIndex: overrides.authIndex ?? '-',
+  authIndexMasked: overrides.authIndexMasked ?? '-',
+  authLabel: overrides.authLabel ?? 'm:m:******ca',
+  apiKeyHash: overrides.apiKeyHash ?? 'api-key-hash',
+  apiKeyLabel: overrides.apiKeyLabel ?? 'sha256:api-key',
+  apiKeyMasked: overrides.apiKeyMasked ?? 'sha256:api-key',
+  provider: overrides.provider ?? '-',
+  providerDetail: overrides.providerDetail,
+  planType: overrides.planType ?? '-',
+  channel: overrides.channel ?? 'codex',
+  channelHost: overrides.channelHost ?? 'example.com',
+  channelDisabled: overrides.channelDisabled ?? false,
+  failed: overrides.failed ?? false,
+  statsIncluded: overrides.statsIncluded ?? true,
+  latencyMs: overrides.latencyMs ?? 1200,
+  inputTokens: overrides.inputTokens ?? 10,
+  outputTokens: overrides.outputTokens ?? 5,
+  reasoningTokens: overrides.reasoningTokens ?? 0,
+  cachedTokens: overrides.cachedTokens ?? 3,
+  totalTokens: overrides.totalTokens ?? 18,
+  totalCost: overrides.totalCost ?? 0.12,
+  taskKey: overrides.taskKey ?? 'task-1',
+  searchText: overrides.searchText ?? 'm:m',
+});
+
+describe('buildRealtimeLogRows', () => {
+  it('uses the prefixed account label for realtime rows from the same provider source', () => {
+    const rows = buildRealtimeLogRows([
+      createMonitoringEventRow({
+        id: 'old-log',
+        account: 'm:m:******ca',
+        accountMasked: 'm:m:******ca',
+        authLabel: 'm:m:******ca',
+      }),
+      createMonitoringEventRow({
+        id: 'new-log',
+        account: 'misaki-su/m:m:******ca',
+        accountMasked: 'misaki-su/m:m:******ca',
+        authLabel: 'misaki-su/m:m:******ca',
+        timestampMs: Date.parse('2026-05-09T02:12:43.000Z'),
+      }),
+    ]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.accountMasked === 'misaki-su/m:m:******ca')).toBe(true);
+  });
+
+  it('uses provider detail text for realtime rows from the same provider source', () => {
+    const rows = buildRealtimeLogRows([
+      createMonitoringEventRow({
+        id: 'old-log',
+        account: 'm:m:******ca',
+        accountMasked: 'm:m:******ca',
+        authLabel: 'm:m:******ca',
+      }),
+      createMonitoringEventRow({
+        id: 'new-log',
+        account: 'misaki-su/m:m:******ca',
+        accountMasked: 'misaki-su/m:m:******ca',
+        authLabel: 'misaki-su/m:m:******ca',
+        providerDetail: {
+          prefix: 'misaki-su',
+          provider: 'Codex',
+          baseUrl: 'https://sub.swyel.codes',
+        },
+        timestampMs: Date.parse('2026-05-09T02:12:43.000Z'),
+      }),
+    ]);
+
+    expect(
+      rows.every(
+        (row) =>
+          row.providerDetail?.provider === 'Codex' &&
+          row.providerDetail.baseUrl === 'https://sub.swyel.codes'
+      )
+    ).toBe(true);
+  });
+});
+
 describe('MonitoringCenterPage account card', () => {
   it('renders bulk action buttons for mixed account auth state', () => {
     const html = renderToStaticMarkup(
@@ -71,6 +169,7 @@ describe('MonitoringCenterPage account card', () => {
           account: 'account@example.com',
           displayAccount: 'account@example.com',
           accountMasked: 'acc***@example.com',
+          providerDetails: [],
           authLabels: ['alpha', 'beta'],
           authIndices: ['1', '2'],
           channels: ['default'],

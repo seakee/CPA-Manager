@@ -1406,6 +1406,8 @@
     "codex_inspection_sampled_meta_idle": "Ожидание запуска",
     "account_quota_empty": "Для этого аккаунта нет доступной для запроса квоты Codex.",
     "account_quota_reset_at": "Сброс",
+    "provider_detail": "Провайдер {{provider}}",
+    "provider_detail_with_address": "Провайдер {{provider}} · Адрес: {{baseUrl}}",
     "realtime_table_title": "Таблица realtime monitor",
     "realtime_table_desc": "Показывает отдельные записи вызовов в realtime с моделью, каналом, статусом, задержкой, usage и cost, чтобы изменения запросов были видны сразу.",
     "model_pricing_desc": "Управляйте ценами моделей прямо на странице мониторинга, чтобы расходы по аккаунтам, моделям и live log обновлялись мгновенно.",

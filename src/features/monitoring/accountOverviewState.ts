@@ -81,6 +81,24 @@ export type MonitoringStatusRangeBounds = {
   endMs: number;
 };
 
+const isMaskedUsageAccountLabel = (value: string) => {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith('m:') ||
+    trimmed.startsWith('k:') ||
+    trimmed.includes('/m:') ||
+    trimmed.includes('/k:')
+  );
+};
+
+const getMonitoringAccountGroupKey = (row: MonitoringEventRow) => {
+  const accountKey = row.account || row.authLabel || row.source;
+  if (row.sourceKey && isMaskedUsageAccountLabel(accountKey)) {
+    return row.sourceKey;
+  }
+  return accountKey || row.sourceKey;
+};
+
 const ACCOUNT_SORT_KEYS = [
   'totalCalls',
   'successCalls',
@@ -465,6 +483,7 @@ export const buildMonitoringAccountStatusDataMap = (
 ) => {
   const resolvedBounds = resolveMonitoringStatusRangeBounds(rows, bounds);
   const grouped = new Map<string, MonitoringEventRow[]>();
+  const aliases = new Map<string, Set<string>>();
 
   if (!resolvedBounds) {
     return new Map<string, StatusBarData>();
@@ -475,18 +494,29 @@ export const buildMonitoringAccountStatusDataMap = (
       return;
     }
 
-    const accountKey = row.account || row.authLabel || row.source;
+    const accountKey = getMonitoringAccountGroupKey(row);
     const existing = grouped.get(accountKey) ?? [];
     existing.push(row);
     grouped.set(accountKey, existing);
+
+    const accountAliases = aliases.get(accountKey) ?? new Set<string>();
+    [row.account, row.authLabel, row.source].forEach((value) => {
+      if (value) accountAliases.add(value);
+    });
+    aliases.set(accountKey, accountAliases);
   });
 
-  return new Map(
-    Array.from(grouped.entries()).map(([accountKey, accountRows]) => [
-      accountKey,
-      buildStatusDataForRows(accountRows, resolvedBounds),
-    ])
-  );
+  const result = new Map<string, StatusBarData>();
+  grouped.forEach((accountRows, accountKey) => {
+    const statusData = buildStatusDataForRows(accountRows, resolvedBounds);
+    result.set(accountKey, statusData);
+    aliases.get(accountKey)?.forEach((alias) => {
+      if (!result.has(alias)) {
+        result.set(alias, statusData);
+      }
+    });
+  });
+  return result;
 };
 
 const normalizeAccountIdentityValue = (value: unknown) =>

@@ -769,6 +769,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 			return nil, err
 		}
 		event.RequestID = requestID.String
+		event.Alias = usage.AliasFromRawJSON(rawJSON.String)
 		event.Provider = provider.String
 		event.Endpoint = endpoint.String
 		event.Method = method.String

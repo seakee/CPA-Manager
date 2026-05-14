@@ -1410,6 +1410,8 @@
     "codex_inspection_sampled_meta_idle": "等待开始",
     "account_quota_empty": "当前账号没有可查询的 Codex 配额。",
     "account_quota_reset_at": "重置时间",
+    "provider_detail": "{{provider}} 提供商",
+    "provider_detail_with_address": "{{provider}} 提供商 地址：{{baseUrl}}",
     "realtime_table_title": "实时监控表",
     "realtime_table_desc": "按单次调用日志实时展示模型、渠道、状态、耗时、用量和花费，持续追踪请求波动。",
     "model_pricing_desc": "在监控页直接维护模型单价，账号、模型和实时日志花费会立即联动更新。",

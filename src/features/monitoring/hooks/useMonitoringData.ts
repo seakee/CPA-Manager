@@ -14,6 +14,7 @@ import {
   collectUsageDetailsWithEndpoint,
   extractTotalTokens,
   normalizeAuthIndex,
+  normalizeUsageSourceId,
   type ModelPrice,
   type UsageDetailWithEndpoint,
 } from '@/utils/usage';
@@ -163,6 +164,18 @@ type ApiKeyDisplayInfo = {
   masked: string;
 };
 
+type ProviderPrefixEntry = {
+  apiKey?: string;
+  prefix?: string;
+  baseUrl?: string;
+};
+
+export type ProviderUsageDisplayInfo = {
+  prefix: string;
+  provider: string;
+  baseUrl: string;
+};
+
 export const buildApiKeyDisplayMap = (
   apiKeys: string[] = [],
   apiKeyAliases: ApiKeyAlias[] = []
@@ -187,6 +200,125 @@ export const buildApiKeyDisplayMap = (
   return map;
 };
 
+const formatProviderName = (provider: string) => {
+  const trimmed = provider.trim();
+  const normalized = trimmed.toLowerCase();
+  if (normalized === 'codex') return 'Codex';
+  if (normalized === 'claude') return 'Claude';
+  if (normalized === 'gemini') return 'Gemini';
+  if (normalized === 'vertex') return 'Vertex';
+  if (normalized === 'openai') return 'OpenAI';
+  return trimmed || 'AI';
+};
+
+const buildProviderUsageInfo = (
+  entry: ProviderPrefixEntry | null | undefined,
+  provider: string,
+  providerPrefix?: string,
+  providerBaseUrl?: string
+): ProviderUsageDisplayInfo | null => {
+  const apiKey = readString(entry?.apiKey);
+  if (!apiKey) return null;
+  const prefix = readString(entry?.prefix) || readString(providerPrefix);
+  const baseUrl = readString(entry?.baseUrl) || readString(providerBaseUrl);
+  const providerName = formatProviderName(provider);
+  return {
+    prefix,
+    provider: providerName,
+    baseUrl,
+  };
+};
+
+export const buildProviderInfoByApiKeyHash = (
+  config?: Config | null
+): Map<string, ProviderUsageDisplayInfo> => {
+  const map = new Map<string, ProviderUsageDisplayInfo>();
+
+  const addEntry = (
+    entry: ProviderPrefixEntry | null | undefined,
+    provider: string,
+    providerPrefix?: string,
+    providerBaseUrl?: string
+  ) => {
+    const info = buildProviderUsageInfo(entry, provider, providerPrefix, providerBaseUrl);
+    if (!info) return;
+    const apiKey = readString(entry?.apiKey);
+    const hash = sha256Hex(apiKey).toLowerCase();
+    if (!hash || map.has(hash)) return;
+    map.set(hash, info);
+  };
+
+  config?.geminiApiKeys?.forEach((entry) => addEntry(entry, 'Gemini'));
+  config?.claudeApiKeys?.forEach((entry) => addEntry(entry, 'Claude'));
+  config?.codexApiKeys?.forEach((entry) => addEntry(entry, 'Codex'));
+  config?.vertexApiKeys?.forEach((entry) => addEntry(entry, 'Vertex'));
+  config?.openaiCompatibility?.forEach((provider) => {
+    provider.apiKeyEntries?.forEach((entry) =>
+      addEntry(entry, provider.name || 'OpenAI', provider.prefix, provider.baseUrl)
+    );
+  });
+
+  return map;
+};
+
+export const buildProviderPrefixByApiKeyHash = (config?: Config | null): Map<string, string> => {
+  const map = new Map<string, string>();
+  buildProviderInfoByApiKeyHash(config).forEach((info, key) => {
+    if (info.prefix) map.set(key, info.prefix);
+  });
+  return map;
+};
+
+const buildMaskedUsageSource = (apiKey: string) => {
+  const trimmed = apiKey.trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= 8) return 'm:****';
+  return `m:${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+};
+
+export const buildProviderInfoByUsageSource = (
+  config?: Config | null
+): Map<string, ProviderUsageDisplayInfo> => {
+  const map = new Map<string, ProviderUsageDisplayInfo>();
+
+  const addEntry = (
+    entry: ProviderPrefixEntry | null | undefined,
+    provider: string,
+    providerPrefix?: string,
+    providerBaseUrl?: string
+  ) => {
+    const info = buildProviderUsageInfo(entry, provider, providerPrefix, providerBaseUrl);
+    if (!info) return;
+    const apiKey = readString(entry?.apiKey);
+    const usageSource = buildMaskedUsageSource(apiKey);
+    const normalizedUsageSource = normalizeUsageSourceId(usageSource);
+    [usageSource, normalizedUsageSource].forEach((source) => {
+      if (!source || map.has(source)) return;
+      map.set(source, info);
+    });
+  };
+
+  config?.geminiApiKeys?.forEach((entry) => addEntry(entry, 'Gemini'));
+  config?.claudeApiKeys?.forEach((entry) => addEntry(entry, 'Claude'));
+  config?.codexApiKeys?.forEach((entry) => addEntry(entry, 'Codex'));
+  config?.vertexApiKeys?.forEach((entry) => addEntry(entry, 'Vertex'));
+  config?.openaiCompatibility?.forEach((provider) => {
+    provider.apiKeyEntries?.forEach((entry) =>
+      addEntry(entry, provider.name || 'OpenAI', provider.prefix, provider.baseUrl)
+    );
+  });
+
+  return map;
+};
+
+export const buildProviderPrefixByUsageSource = (config?: Config | null): Map<string, string> => {
+  const map = new Map<string, string>();
+  buildProviderInfoByUsageSource(config).forEach((info, key) => {
+    if (info.prefix) map.set(key, info.prefix);
+  });
+  return map;
+};
+
 const shouldIncludeInStats = (
   row: Pick<MonitoringEventRow, 'failed' | 'inputTokens' | 'outputTokens'>
 ) => row.failed || row.inputTokens > 0 || row.outputTokens > 0;
@@ -201,12 +333,58 @@ const looksLikeMaskedUsageSource = (value: string) => {
   return trimmed.startsWith('m:') || trimmed.startsWith('k:');
 };
 
+const extractUsageAliasPrefix = (alias: unknown) => {
+  const text = readString(alias);
+  if (!text || !text.includes('/')) return '';
+  const prefix = text.split('/')[0]?.trim() ?? '';
+  if (!prefix || prefix === '-' || /\s/.test(prefix)) return '';
+  return prefix;
+};
+
+const withUsageAliasPrefix = (label: string, prefix: string) => {
+  const trimmedLabel = label.trim();
+  const trimmedPrefix = prefix.trim();
+  if (!trimmedLabel || !trimmedPrefix) return trimmedLabel;
+  if (
+    trimmedLabel === '-' ||
+    trimmedLabel === trimmedPrefix ||
+    trimmedLabel.startsWith(`${trimmedPrefix}/`)
+  ) {
+    return trimmedLabel;
+  }
+  return `${trimmedPrefix}/${trimmedLabel}`;
+};
+
 const resolveAccountDisplayName = (account: string, channels: Iterable<string>) => {
   const channelLabels = Array.from(new Set(Array.from(channels).filter(isEffectiveLabel)));
   if (looksLikeMaskedUsageSource(account) && channelLabels.length === 1) {
     return channelLabels[0];
   }
   return account || channelLabels[0] || '-';
+};
+
+const isPrefixedUsageLabel = (value: string) => value.includes('/');
+
+const choosePreferredUsageLabel = (current: string, next: string) => {
+  const currentText = current.trim();
+  const nextText = next.trim();
+  if (!nextText) return currentText;
+  if (!currentText) return nextText;
+  if (isPrefixedUsageLabel(nextText) && !isPrefixedUsageLabel(currentText)) return nextText;
+  return currentText;
+};
+
+const isMaskedUsageAccountLabel = (value: string) => {
+  const trimmed = value.trim();
+  return looksLikeMaskedUsageSource(trimmed) || trimmed.includes('/m:') || trimmed.includes('/k:');
+};
+
+const getMonitoringAccountGroupKey = (row: MonitoringEventRow) => {
+  const accountKey = row.account || row.authLabel || row.source;
+  if (row.sourceKey && isMaskedUsageAccountLabel(accountKey)) {
+    return row.sourceKey;
+  }
+  return accountKey || row.sourceKey;
 };
 
 type MonitoringChannelMeta = {
@@ -364,6 +542,7 @@ export type MonitoringEventRow = {
   apiKeyLabel: string;
   apiKeyMasked: string;
   provider: string;
+  providerDetail?: ProviderUsageDisplayInfo;
   planType: string;
   channel: string;
   channelHost: string;
@@ -423,6 +602,7 @@ export type MonitoringAccountRow = {
   account: string;
   displayAccount: string;
   accountMasked: string;
+  providerDetails?: ProviderUsageDisplayInfo[];
   authLabels: string[];
   authIndices: string[];
   channels: string[];
@@ -811,6 +991,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
         }
       >;
       rows: MonitoringEventRow[];
+      providerDetails: Map<string, ProviderUsageDisplayInfo>;
       totalCalls: number;
       successCalls: number;
       failureCalls: number;
@@ -826,7 +1007,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
   >();
 
   rows.forEach((row) => {
-    const accountKey = row.account || row.authLabel || row.source;
+    const accountKey = getMonitoringAccountGroupKey(row);
     const existing = grouped.get(accountKey) ?? {
       id: accountKey,
       account: row.account,
@@ -834,6 +1015,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       authLabels: new Set<string>(),
       authIndices: new Set<string>(),
       channels: new Set<string>(),
+      providerDetails: new Map<string, ProviderUsageDisplayInfo>(),
       modelMap: new Map(),
       rows: [] as MonitoringEventRow[],
       totalCalls: 0,
@@ -849,7 +1031,15 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       lastSeenAt: 0,
     };
 
+    existing.account = choosePreferredUsageLabel(existing.account, row.account);
+    existing.accountMasked = choosePreferredUsageLabel(existing.accountMasked, row.accountMasked);
     existing.rows.push(row);
+    if (row.providerDetail) {
+      const providerDetailKey = [row.providerDetail.provider, row.providerDetail.baseUrl].join('::');
+      if (!existing.providerDetails.has(providerDetailKey)) {
+        existing.providerDetails.set(providerDetailKey, row.providerDetail);
+      }
+    }
     existing.authLabels.add(row.authLabel);
     existing.authIndices.add(row.authIndex);
     existing.channels.add(row.channel);
@@ -903,6 +1093,9 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
         account: item.account,
         displayAccount: resolveAccountDisplayName(item.account, channels),
         accountMasked: item.accountMasked,
+        providerDetails: Array.from(item.providerDetails.values()).sort((left, right) =>
+          [left.provider, left.baseUrl].join(' ').localeCompare([right.provider, right.baseUrl].join(' '))
+        ),
         authLabels: Array.from(item.authLabels).sort(),
         authIndices: Array.from(item.authIndices).sort(),
         channels,
@@ -1420,7 +1613,9 @@ const buildEventRows = (
   sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
   channelByAuthIndex: Map<string, MonitoringChannelMeta>,
   modelPrices: Record<string, ModelPrice>,
-  apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>
+  apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>,
+  providerInfoByApiKeyHash: Map<string, ProviderUsageDisplayInfo>,
+  providerInfoByUsageSource: Map<string, ProviderUsageDisplayInfo>
 ) =>
   details
     .map((detail, index) => {
@@ -1451,11 +1646,28 @@ const buildEventRows = (
         detail.auth_provider_snapshot ?? detail.authProviderSnapshot
       );
       const snapshotDisplay = snapshotAccount || snapshotLabel;
-      const sourceLabel = authMeta?.label || snapshotDisplay || sourceMeta.displayName || authIndex;
-      const sourceMasked = maskEmailLike(sourceLabel);
-      const account = authMeta?.account || snapshotAccount || sourceLabel;
-      const accountMasked = maskEmailLike(account);
       const apiKeyHash = readString(detail.api_key_hash ?? detail.apiKeyHash).toLowerCase();
+      const usageSource = readString(detail.source);
+      const matchedApiKeyInfo = providerInfoByApiKeyHash.get(apiKeyHash);
+      const matchedUsageSourceInfo = providerInfoByUsageSource.get(usageSource);
+      const matchedProviderInfo = matchedApiKeyInfo || matchedUsageSourceInfo;
+      const rawSourceLabel =
+        authMeta?.label ||
+        snapshotDisplay ||
+        (matchedProviderInfo?.prefix && looksLikeMaskedUsageSource(usageSource)
+          ? usageSource
+          : sourceMeta.displayName) ||
+        authIndex;
+      const aliasPrefix =
+        extractUsageAliasPrefix(detail.alias) ||
+        matchedApiKeyInfo?.prefix ||
+        matchedUsageSourceInfo?.prefix ||
+        '';
+      const sourceLabel = withUsageAliasPrefix(rawSourceLabel, aliasPrefix);
+      const sourceMasked = withUsageAliasPrefix(maskEmailLike(rawSourceLabel), aliasPrefix);
+      const rawAccount = authMeta?.account || snapshotAccount || rawSourceLabel;
+      const account = withUsageAliasPrefix(rawAccount, aliasPrefix);
+      const accountMasked = withUsageAliasPrefix(maskEmailLike(rawAccount), aliasPrefix);
       const apiKeyDisplay = apiKeyDisplayMap.get(apiKeyHash);
       const apiKeyLabel = apiKeyDisplay?.label || formatApiKeyHashLabel(apiKeyHash);
       const apiKeyMasked = apiKeyDisplay?.masked || apiKeyLabel;
@@ -1506,7 +1718,8 @@ const buildEventRows = (
         apiKeyHash,
         apiKeyLabel,
         apiKeyMasked,
-        provider: authMeta?.provider || snapshotProvider || sourceMeta.type || '-',
+        provider: authMeta?.provider || snapshotProvider || matchedProviderInfo?.provider || sourceMeta.type || '-',
+        providerDetail: matchedProviderInfo,
         planType: authMeta?.planType || '-',
         channel: channelLabel,
         channelHost: channelMeta?.host || '-',
@@ -1523,6 +1736,8 @@ const buildEventRows = (
         taskKey,
         searchText: buildSearchText(
           detail.__modelName,
+          detail.alias,
+          aliasPrefix,
           sourceLabel,
           authMeta?.account,
           authMeta?.label,
@@ -1532,6 +1747,8 @@ const buildEventRows = (
           apiKeyMasked,
           channelLabel,
           channelMeta?.host,
+          matchedProviderInfo?.provider,
+          matchedProviderInfo?.baseUrl,
           endpointPath,
           endpointMethod,
           authMeta?.provider || snapshotProvider,
@@ -1687,6 +1904,16 @@ export function useMonitoringData({
     return buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []);
   }, [apiKeyAliases, config?.apiKeys]);
 
+  const providerInfoByApiKeyHash = useMemo(
+    () => buildProviderInfoByApiKeyHash(config),
+    [config]
+  );
+
+  const providerInfoByUsageSource = useMemo(
+    () => buildProviderInfoByUsageSource(config),
+    [config]
+  );
+
   const allRows = useMemo(() => {
     const details = collectUsageDetailsWithEndpoint(usage);
     return buildEventRows(
@@ -1696,7 +1923,9 @@ export function useMonitoringData({
       sourceInfoMap,
       channelByAuthIndex,
       modelPrices,
-      apiKeyDisplayMap
+      apiKeyDisplayMap,
+      providerInfoByApiKeyHash,
+      providerInfoByUsageSource
     ).sort((left, right) => right.timestampMs - left.timestampMs);
   }, [
     apiKeyDisplayMap,
@@ -1704,6 +1933,8 @@ export function useMonitoringData({
     authMetaMap,
     channelByAuthIndex,
     modelPrices,
+    providerInfoByApiKeyHash,
+    providerInfoByUsageSource,
     sourceInfoMap,
     usage,
   ]);

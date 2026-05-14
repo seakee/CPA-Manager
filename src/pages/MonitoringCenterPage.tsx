@@ -72,6 +72,7 @@ import {
   type MonitoringAccountOverviewMode,
 } from '@/features/monitoring/accountOverviewState';
 import { sortAccountOverviewCardMetrics } from '@/features/monitoring/accountOverviewCardMetrics';
+import { buildRealtimeLogRows } from '@/features/monitoring/realtimeLogRows';
 import {
   buildMonitoringAccountQuotaTargetsByAccount,
   type MonitoringAccountQuotaTarget,
@@ -175,13 +176,6 @@ type PriceDraft = {
   prompt: string;
   completion: string;
   cache: string;
-};
-
-type RealtimeLogRow = MonitoringEventRow & {
-  requestCount: number;
-  successRate: number;
-  streamKey: string;
-  recentPattern: boolean[];
 };
 
 type AccountQuotaWindow = {
@@ -321,8 +315,30 @@ const getCodexPlanLabel = (planType: string | null | undefined, t: TFunction): s
   return planType || normalized;
 };
 
-const buildAccountSecondaryText = (row: MonitoringAccountRow) => {
+const buildProviderDetailText = (
+  detail: MonitoringEventRow['providerDetail'] | null | undefined,
+  t: TFunction
+) => {
+  if (!detail) return '';
+  if (detail.baseUrl) {
+    return t('monitoring.provider_detail_with_address', {
+      provider: detail.provider,
+      baseUrl: detail.baseUrl,
+    });
+  }
+  return t('monitoring.provider_detail', { provider: detail.provider });
+};
+
+const buildAccountSecondaryText = (row: MonitoringAccountRow, t: TFunction) => {
   const primaryText = row.displayAccount || row.account;
+  const providerDetails =
+    row.providerDetails
+      ?.map((detail) => buildProviderDetailText(detail, t))
+      .filter((detail) => detail && detail !== primaryText) ?? [];
+  if (providerDetails.length > 0) {
+    return joinShort(providerDetails, 2);
+  }
+
   if (row.account && row.account !== primaryText) {
     return row.account;
   }
@@ -346,6 +362,11 @@ const buildAccountOptionLabel = (row: MonitoringAccountRow) => {
   }
   return `${row.displayAccount} / ${row.account}`;
 };
+
+const buildRequestSourceMetaText = (
+  row: Pick<MonitoringEventRow, 'providerDetail' | 'provider' | 'channel'>,
+  t: TFunction
+) => buildProviderDetailText(row.providerDetail, t) || row.provider || row.channel || '-';
 
 const buildAccountSummaryMetrics = (
   row: MonitoringAccountRow,
@@ -452,40 +473,6 @@ const requestAccountQuota = async (
     planType: normalizePlanType(payload.plan_type ?? payload.planType) ?? target.planType,
     windows: buildAccountQuotaWindows(payload, t),
   };
-};
-
-const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
-  const sortedAsc = [...rows].sort(
-    (left, right) => left.timestampMs - right.timestampMs || left.id.localeCompare(right.id)
-  );
-  const metricsByStream = new Map<string, { total: number; success: number; pattern: boolean[] }>();
-
-  const enriched = sortedAsc.map((row) => {
-    const streamKey = [row.account, row.provider, row.model, row.channel].join('::');
-    const previous = metricsByStream.get(streamKey) ?? { total: 0, success: 0, pattern: [] };
-    const nextPattern = [...previous.pattern, !row.failed].slice(-10);
-    const next = {
-      total: previous.total + (row.statsIncluded ? 1 : 0),
-      success: previous.success + (row.statsIncluded && !row.failed ? 1 : 0),
-      pattern: nextPattern,
-    };
-    metricsByStream.set(streamKey, next);
-
-    return {
-      ...row,
-      streamKey,
-      requestCount: next.total,
-      successRate: next.total > 0 ? next.success / next.total : 1,
-      recentPattern: nextPattern,
-    } satisfies RealtimeLogRow;
-  });
-
-  return enriched.sort(
-    (left, right) =>
-      right.timestampMs - left.timestampMs ||
-      right.requestCount - left.requestCount ||
-      right.id.localeCompare(left.id)
-  );
 };
 
 function SummaryCard({ label, value, meta, tone, variant = 'primary' }: SummaryCardProps) {
@@ -972,16 +959,18 @@ function AccountSummaryPrimary({
   row,
   expanded,
   onToggle,
+  t,
   statusTone = 'enabled',
   showSecondary = true,
 }: {
   row: MonitoringAccountRow;
   expanded: boolean;
   onToggle: () => void;
+  t: TFunction;
   statusTone?: string;
   showSecondary?: boolean;
 }) {
-  const secondaryText = buildAccountSecondaryText(row);
+  const secondaryText = buildAccountSecondaryText(row, t);
   const accountLabel = row.displayAccount || row.account;
 
   return (
@@ -1640,7 +1629,7 @@ export function AccountOverviewCard({
   const canToggleEnabled = authState.enabledState !== 'unavailable';
   const toggleChecked = authState.enabledState === 'enabled';
   const statusTone = getAccountStatusTone(authState);
-  const secondaryText = buildAccountSecondaryText(row);
+  const secondaryText = buildAccountSecondaryText(row, t);
   const latestRequestText = new Date(row.lastSeenAt).toLocaleString(locale);
 
   return (
@@ -1660,6 +1649,7 @@ export function AccountOverviewCard({
             row={row}
             expanded={isExpanded}
             onToggle={onToggle}
+            t={t}
             statusTone={statusTone}
             showSecondary={false}
           />
@@ -3272,6 +3262,7 @@ export function MonitoringCenterPage() {
                             row={row}
                             expanded={isExpanded}
                             onToggle={() => toggleAccountExpanded(row.id, row.account)}
+                            t={t}
                             statusTone={statusTone}
                           />
                         </td>
@@ -3439,8 +3430,8 @@ export function MonitoringCenterPage() {
                         aria-hidden="true"
                       />
                       <div className={styles.primaryCell}>
-                        <span>{row.provider}</span>
-                        <small>{row.account || row.authLabel || row.accountMasked || '-'}</small>
+                        <span>{row.accountMasked || row.account || row.authLabel || '-'}</span>
+                        <small>{buildRequestSourceMetaText(row, t)}</small>
                       </div>
                     </div>
                   </td>

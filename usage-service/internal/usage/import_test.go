@@ -151,6 +151,30 @@ func TestParseImportPayloadPreservesExportedEventHash(t *testing.T) {
 	}
 }
 
+func TestBuildPayloadExposesAliasFromRawJSON(t *testing.T) {
+	payload := BuildPayload([]Event{
+		{
+			EventHash:   "stable-hash",
+			TimestampMS: 1778739768787,
+			Timestamp:   "2026-05-14T06:22:48.787Z",
+			Provider:    "codex",
+			Model:       "gpt-5.5",
+			Endpoint:    "POST /v1/responses",
+			Source:      "m:fe_o...8599",
+			RawJSON:     `{"alias":"test1/gpt-5.5","source":"fe_oa_1757129ed36fff1e6d276a7e85f95f3570799d8445cc8599"}`,
+			CreatedAtMS: 1778739768788,
+		},
+	})
+
+	details := payload.APIs["POST /v1/responses"].Models["gpt-5.5"].Details
+	if len(details) != 1 {
+		t.Fatalf("details = %#v", details)
+	}
+	if details[0].Alias != "test1/gpt-5.5" {
+		t.Fatalf("alias = %q", details[0].Alias)
+	}
+}
+
 func TestParseImportPayloadJSONLCountsBadLines(t *testing.T) {
 	payload := `{"timestamp":"2026-01-02T03:04:05Z","model":"gpt-4o","endpoint":"GET /v1/models","tokens":{"input_tokens":1}}
 not-json`
