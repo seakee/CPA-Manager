@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { TFunction } from 'i18next';
 import { AccountExpandedDetails, AccountOverviewCard } from './MonitoringCenterPage';
 import { buildEmptyMonitoringStatusData } from '@/features/monitoring/accountOverviewState';
+import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const copy: Record<string, string> = {
@@ -47,6 +48,9 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'usage_stats.model_price_model': 'Model',
     'monitoring.last_sync': 'Last sync',
     'monitoring.account_quota_reset_at': 'Reset',
+    'monitoring.filter_provider': 'Provider',
+    'monitoring.column_host': 'Host',
+    'monitoring.source': 'Source',
     'status_bar.no_requests': 'No requests',
     'codex_quota.title': 'Codex Quota',
     'codex_quota.refresh_button': 'Refresh',
@@ -63,6 +67,64 @@ const t = ((key: string, options?: Record<string, unknown>) => {
 }) as TFunction;
 
 describe('MonitoringCenterPage account card', () => {
+  it('prefers readable channel names in realtime source cells', () => {
+    const display = buildRealtimeSourceDisplay(
+      {
+        account: 'alice@example.com',
+        accountMasked: 'ali***@example.com',
+        authLabel: 'alice',
+        channel: 'Claude Relay',
+        channelHost: 'relay.example.com',
+        provider: 'openai',
+        sourceMasked: 'Team Key',
+      },
+      t
+    );
+
+    expect(display.primary).toBe('Claude Relay');
+    expect(display.meta).toBe('Provider: openai');
+  });
+
+  it('shows one realtime source meta value by priority', () => {
+    const baseRow = {
+      account: 'alice@example.com',
+      accountMasked: 'ali***@example.com',
+      authLabel: 'alice',
+      channel: '-',
+      channelHost: 'relay.example.com',
+      sourceMasked: 'Team Key',
+    };
+
+    expect(
+      buildRealtimeSourceDisplay(
+        {
+          ...baseRow,
+          provider: 'openai',
+        },
+        t
+      ).primary
+    ).toBe('openai');
+    expect(
+      buildRealtimeSourceDisplay(
+        {
+          ...baseRow,
+          provider: 'openai',
+        },
+        t
+      ).meta
+    ).toBe('Host: relay.example.com');
+
+    expect(
+      buildRealtimeSourceDisplay(
+        {
+          ...baseRow,
+          provider: '-',
+        },
+        t
+      ).meta
+    ).toBe('alice@example.com');
+  });
+
   it('renders bulk action buttons for mixed account auth state', () => {
     const html = renderToStaticMarkup(
       <AccountOverviewCard

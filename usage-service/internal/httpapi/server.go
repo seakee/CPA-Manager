@@ -154,10 +154,16 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
+	setup, ok, err := s.resolveSetup(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":   serviceID,
-		"mode":      "embedded",
-		"startedAt": s.startedAt,
+		"service":    serviceID,
+		"mode":       "embedded",
+		"startedAt":  s.startedAt,
+		"configured": ok && setup.CPAUpstreamURL != "" && setup.ManagementKey != "",
 	})
 }
 

@@ -35,6 +35,7 @@ export interface UsageServiceInfo {
   service?: string;
   mode?: string;
   startedAt?: number;
+  configured?: boolean;
 }
 
 export interface UsageServiceCollectorStatus {

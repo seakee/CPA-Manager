@@ -87,6 +87,7 @@
     "cpa_connection_hint": "Usage Service 会用该地址连接 CPA Management API 和 RESP 用量队列。",
     "cpa_address_required": "请输入 CPA 地址",
     "usage_service_mode_hint": "当前面板由 Usage Service 托管，请填写 CPA API 地址。",
+    "usage_service_configured_hint": "当前面板由已配置的 Usage Service 托管，登录后会使用服务端保存的 CPA 连接。",
     "usage_service_address": "Usage Service 地址",
     "setup_title": "初始化向导",
     "setup_steps": "初始化步骤",

@@ -124,6 +124,42 @@ func TestModelListProxyPreservesAuthorization(t *testing.T) {
 	}
 }
 
+func TestInfoReportsConfiguredState(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		saveSetup  bool
+		configured bool
+	}{
+		{name: "not configured", saveSetup: false, configured: false},
+		{name: "configured", saveSetup: true, configured: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := newTestHandler(t, "http://example.test", tc.saveSetup)
+			req := httptest.NewRequest(http.MethodGet, "/usage-service/info", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+			var response struct {
+				Service    string `json:"service"`
+				Configured bool   `json:"configured"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Service != serviceID {
+				t.Fatalf("service = %q, want %q", response.Service, serviceID)
+			}
+			if response.Configured != tc.configured {
+				t.Fatalf("configured = %v, want %v", response.Configured, tc.configured)
+			}
+		})
+	}
+}
+
 func TestUsageImportAcceptsLegacyExportAndSkipsDuplicates(t *testing.T) {
 	handler := newTestHandler(t, "http://example.test", true)
 	payload := `{

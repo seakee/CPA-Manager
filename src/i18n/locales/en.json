@@ -87,6 +87,7 @@
     "cpa_connection_hint": "Usage Service uses this URL to reach the CPA Management API and RESP usage queue.",
     "cpa_address_required": "Enter the CPA URL",
     "usage_service_mode_hint": "This panel is hosted by Usage Service. Enter the CPA API URL.",
+    "usage_service_configured_hint": "This panel is hosted by a configured Usage Service. After login it uses the saved CPA connection on the server.",
     "usage_service_address": "Usage Service URL",
     "setup_title": "Setup Wizard",
     "setup_steps": "Setup steps",

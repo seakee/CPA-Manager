@@ -1668,6 +1668,10 @@
 
 .table.accountOverviewTable tbody .focusedRow td {
   background: color-mix(in srgb, var(--monitor-accent) 7%, var(--monitor-surface-elevated));
+  box-shadow: none;
+}
+
+.table.accountOverviewTable tbody .focusedRow td:first-child {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--monitor-accent) 72%, transparent);
 }
 

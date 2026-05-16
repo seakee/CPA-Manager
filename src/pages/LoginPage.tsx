@@ -14,19 +14,28 @@ import {
   IconShield,
   IconTimer,
 } from '@/components/ui/icons';
-import { useAuthStore, useLanguageStore, useNotificationStore, useUsageServiceStore } from '@/stores';
+import {
+  useAuthStore,
+  useLanguageStore,
+  useNotificationStore,
+  useUsageServiceStore,
+} from '@/stores';
 import {
   LEGACY_USAGE_SERVICE_LAST_CPA_BASE_KEY,
   USAGE_SERVICE_LAST_CPA_BASE_KEY,
   getUsageServiceErrorCode,
-  isUsageServiceId,
-  usageServiceApi
+  usageServiceApi,
 } from '@/services/api/usageService';
-import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
+import {
+  detectApiBaseFromLocation,
+  normalizeApiBase,
+  resolveDefaultCPAConnectionBase,
+} from '@/utils/connection';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
+import { resolveUsageServiceLoginMode } from './loginMode';
 import styles from './LoginPage.module.scss';
 
 /**
@@ -118,7 +127,8 @@ export function LoginPage() {
   const [autoLoading, setAutoLoading] = useState(true);
   const [autoLoginSuccess, setAutoLoginSuccess] = useState(false);
   const [error, setError] = useState('');
-  const [usageServiceMode, setUsageServiceMode] = useState(false);
+  const [hostedByUsageService, setHostedByUsageService] = useState(false);
+  const [usageServiceNeedsSetup, setUsageServiceNeedsSetup] = useState(false);
   const [usageSetupStep, setUsageSetupStep] = useState<UsageSetupStep>('connection');
 
   const detectedBase = useMemo(() => detectApiBaseFromLocation(), []);
@@ -149,7 +159,7 @@ export function LoginPage() {
     () =>
       LANGUAGE_ORDER.map((lang) => ({
         value: lang,
-        label: t(LANGUAGE_LABEL_KEYS[lang])
+        label: t(LANGUAGE_LABEL_KEYS[lang]),
       })),
     [t]
   );
@@ -167,12 +177,19 @@ export function LoginPage() {
     const init = async () => {
       try {
         let detectedUsageService = false;
+        let detectedUsageServiceConfigured = false;
         try {
           const info = await usageServiceApi.getInfo(detectedBase);
-          detectedUsageService = isUsageServiceId(info.service);
-          setUsageServiceMode(detectedUsageService);
+          const mode = resolveUsageServiceLoginMode(info);
+          detectedUsageService = mode.hostedByUsageService;
+          detectedUsageServiceConfigured = detectedUsageService && !mode.usageServiceNeedsSetup;
+          setHostedByUsageService(mode.hostedByUsageService);
+          setUsageServiceNeedsSetup(mode.usageServiceNeedsSetup);
         } catch {
           detectedUsageService = false;
+          detectedUsageServiceConfigured = false;
+          setHostedByUsageService(false);
+          setUsageServiceNeedsSetup(false);
         }
 
         const autoLoggedIn = await restoreSession();
@@ -191,12 +208,18 @@ export function LoginPage() {
             localStorage.getItem(USAGE_SERVICE_LAST_CPA_BASE_KEY) ||
             localStorage.getItem(LEGACY_USAGE_SERVICE_LAST_CPA_BASE_KEY) ||
             '';
+          const defaultCPAConnectionBase = resolveDefaultCPAConnectionBase({
+            hostedByUsageService: detectedUsageService,
+            currentBase: detectedBase,
+          });
           setApiBase(
             detectedUsageService
-              ? lastCPAForUsageService
+              ? detectedUsageServiceConfigured
+                ? detectedBase
+                : lastCPAForUsageService || defaultCPAConnectionBase
               : storedBase || detectedBase
           );
-          if (detectedUsageService) {
+          if (detectedUsageService && !detectedUsageServiceConfigured) {
             setShowCustomBase(true);
           }
           setManagementKey(storedKey || '');
@@ -261,7 +284,7 @@ export function LoginPage() {
   }, [usageSetupStep, usageSetupSteps]);
 
   const handleSubmit = useCallback(async () => {
-    if (usageServiceMode && !usageSetupIsLastStep) {
+    if (usageServiceNeedsSetup && !usageSetupIsLastStep) {
       handleUsageSetupNext();
       return;
     }
@@ -272,15 +295,17 @@ export function LoginPage() {
     }
 
     const baseToUse = apiBase ? normalizeApiBase(apiBase) : detectedBase;
-    if (usageServiceMode && !apiBase.trim()) {
+    if (usageServiceNeedsSetup && !apiBase.trim()) {
       setError(t('login.cpa_address_required'));
       return;
     }
     const parsedPollIntervalMs = Number(pollIntervalMs);
     if (
-      usageServiceMode &&
+      usageServiceNeedsSetup &&
       requestMonitoringEnabled &&
-      (!/^\d+$/.test(pollIntervalMs.trim()) || !Number.isFinite(parsedPollIntervalMs) || parsedPollIntervalMs <= 0)
+      (!/^\d+$/.test(pollIntervalMs.trim()) ||
+        !Number.isFinite(parsedPollIntervalMs) ||
+        parsedPollIntervalMs <= 0)
     ) {
       setError(t('login.poll_interval_invalid'));
       return;
@@ -289,7 +314,7 @@ export function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      if (usageServiceMode) {
+      if (usageServiceNeedsSetup) {
         await usageServiceApi.setup(detectedBase, {
           cpaBaseUrl: baseToUse,
           managementKey: managementKey.trim(),
@@ -299,11 +324,13 @@ export function LoginPage() {
         });
         setUsageServiceConfig({ enabled: true, serviceBase: detectedBase });
         localStorage.setItem(USAGE_SERVICE_LAST_CPA_BASE_KEY, baseToUse);
+      } else if (hostedByUsageService) {
+        setUsageServiceConfig({ enabled: true, serviceBase: detectedBase });
       }
       await login({
-        apiBase: usageServiceMode ? detectedBase : baseToUse,
+        apiBase: hostedByUsageService ? detectedBase : baseToUse,
         managementKey: managementKey.trim(),
-        rememberPassword
+        rememberPassword,
       });
       showNotification(t('common.connected_status'), 'success');
       navigate('/', { replace: true });
@@ -318,6 +345,7 @@ export function LoginPage() {
     apiBase,
     detectedBase,
     handleUsageSetupNext,
+    hostedByUsageService,
     login,
     managementKey,
     navigate,
@@ -327,7 +355,7 @@ export function LoginPage() {
     showNotification,
     setUsageServiceConfig,
     t,
-    usageServiceMode,
+    usageServiceNeedsSetup,
     usageSetupIsLastStep,
   ]);
 
@@ -376,17 +404,19 @@ export function LoginPage() {
           /* 登录表单 */
           <div
             className={`${styles.formContent} ${
-              usageServiceMode ? styles.setupFormContent : ''
+              usageServiceNeedsSetup ? styles.setupFormContent : ''
             }`}
           >
             {/* Logo */}
-            {!usageServiceMode && <img src={INLINE_LOGO_JPEG} alt="Logo" className={styles.logo} />}
+            {!usageServiceNeedsSetup && (
+              <img src={INLINE_LOGO_JPEG} alt="Logo" className={styles.logo} />
+            )}
 
             {/* 登录表单卡片 */}
             <div
-              className={`${styles.loginCard} ${usageServiceMode ? styles.setupCard : ''}`}
+              className={`${styles.loginCard} ${usageServiceNeedsSetup ? styles.setupCard : ''}`}
             >
-              {usageServiceMode ? (
+              {usageServiceNeedsSetup ? (
                 <div className={styles.setupHeader}>
                   <div className={styles.setupLanguage}>
                     <Select
@@ -419,7 +449,7 @@ export function LoginPage() {
                 </div>
               )}
 
-              {usageServiceMode && (
+              {usageServiceNeedsSetup && (
                 <div className={styles.setupFlow}>
                   <div className={styles.stepper} aria-label={t('login.setup_steps')}>
                     {usageSetupSteps.map((step, index) => {
@@ -460,13 +490,9 @@ export function LoginPage() {
                             <IconInfo size={18} />
                           </div>
                           <div className={styles.connectionCopy}>
-                            <div className={styles.label}>
-                              {t('login.usage_service_address')}
-                            </div>
+                            <div className={styles.label}>{t('login.usage_service_address')}</div>
                             <div className={styles.value}>{detectedBase}</div>
-                            <div className={styles.hint}>
-                              {t('login.usage_service_mode_hint')}
-                            </div>
+                            <div className={styles.hint}>{t('login.usage_service_mode_hint')}</div>
                           </div>
                         </div>
                         <Input
@@ -563,9 +589,7 @@ export function LoginPage() {
                           </span>
                           <span>{t('login.request_monitoring_enabled')}</span>
                           <strong>
-                            {requestMonitoringEnabled
-                              ? t('common.enabled')
-                              : t('common.disabled')}
+                            {requestMonitoringEnabled ? t('common.enabled') : t('common.disabled')}
                           </strong>
                         </div>
                         {requestMonitoringEnabled && (
@@ -583,9 +607,7 @@ export function LoginPage() {
                           </span>
                           <span>{t('login.remember_password_label')}</span>
                           <strong>
-                            {rememberPassword
-                              ? t('common.enabled')
-                              : t('common.disabled')}
+                            {rememberPassword ? t('common.enabled') : t('common.disabled')}
                           </strong>
                         </div>
                       </div>
@@ -604,11 +626,19 @@ export function LoginPage() {
                       {t('common.previous')}
                     </Button>
                     {usageSetupIsLastStep ? (
-                      <Button className={styles.setupNextButton} onClick={handleSubmit} loading={loading}>
+                      <Button
+                        className={styles.setupNextButton}
+                        onClick={handleSubmit}
+                        loading={loading}
+                      >
                         {loading ? t('login.submitting') : t('login.submit_button')}
                       </Button>
                     ) : (
-                      <Button className={styles.setupNextButton} onClick={handleUsageSetupNext} disabled={loading}>
+                      <Button
+                        className={styles.setupNextButton}
+                        onClick={handleUsageSetupNext}
+                        disabled={loading}
+                      >
                         {t('common.next')}
                       </Button>
                     )}
@@ -616,32 +646,40 @@ export function LoginPage() {
                 </div>
               )}
 
-              {!usageServiceMode && (
+              {!usageServiceNeedsSetup && (
                 <>
                   <div className={styles.connectionBox}>
                     <div className={styles.label}>{t('login.connection_current')}</div>
                     <div className={styles.value}>{apiBase || detectedBase}</div>
-                    <div className={styles.hint}>{t('login.connection_auto_hint')}</div>
+                    <div className={styles.hint}>
+                      {hostedByUsageService
+                        ? t('login.usage_service_configured_hint')
+                        : t('login.connection_auto_hint')}
+                    </div>
                   </div>
 
-                  <div className={styles.toggleAdvanced}>
-                    <SelectionCheckbox
-                      checked={showCustomBase}
-                      onChange={setShowCustomBase}
-                      ariaLabel={t('login.custom_connection_label')}
-                      label={t('login.custom_connection_label')}
-                      labelClassName={styles.toggleLabel}
-                    />
-                  </div>
+                  {!hostedByUsageService && (
+                    <>
+                      <div className={styles.toggleAdvanced}>
+                        <SelectionCheckbox
+                          checked={showCustomBase}
+                          onChange={setShowCustomBase}
+                          ariaLabel={t('login.custom_connection_label')}
+                          label={t('login.custom_connection_label')}
+                          labelClassName={styles.toggleLabel}
+                        />
+                      </div>
 
-                  {showCustomBase && (
-                    <Input
-                      label={t('login.custom_connection_label')}
-                      placeholder={t('login.custom_connection_placeholder')}
-                      value={apiBase}
-                      onChange={(e) => setApiBase(e.target.value)}
-                      hint={t('login.custom_connection_hint')}
-                    />
+                      {showCustomBase && (
+                        <Input
+                          label={t('login.custom_connection_label')}
+                          placeholder={t('login.custom_connection_placeholder')}
+                          value={apiBase}
+                          onChange={(e) => setApiBase(e.target.value)}
+                          hint={t('login.custom_connection_hint')}
+                        />
+                      )}
+                    </>
                   )}
 
                   <Input
@@ -657,16 +695,8 @@ export function LoginPage() {
                         type="button"
                         className="btn btn-ghost btn-sm"
                         onClick={() => setShowKey((prev) => !prev)}
-                        aria-label={
-                          showKey
-                            ? t('login.hide_key')
-                            : t('login.show_key')
-                        }
-                        title={
-                          showKey
-                            ? t('login.hide_key')
-                            : t('login.show_key')
-                        }
+                        aria-label={showKey ? t('login.hide_key') : t('login.show_key')}
+                        title={showKey ? t('login.hide_key') : t('login.show_key')}
                       >
                         {showKey ? <IconEyeOff size={16} /> : <IconEye size={16} />}
                       </button>
