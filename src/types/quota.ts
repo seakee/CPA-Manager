@@ -130,6 +130,36 @@ export interface CodexUsagePayload {
   additionalRateLimits?: CodexAdditionalRateLimit[] | null;
 }
 
+export interface CodexDailyUsageMetrics {
+  credits?: number | string;
+  users?: number | string;
+  threads?: number | string;
+  turns?: number | string;
+  text_total_tokens?: number | string;
+  textTotalTokens?: number | string;
+  cached_text_input_tokens?: number | string;
+  cachedTextInputTokens?: number | string;
+  uncached_text_input_tokens?: number | string;
+  uncachedTextInputTokens?: number | string;
+  text_output_tokens?: number | string;
+  textOutputTokens?: number | string;
+}
+
+export interface CodexDailyUsageClient extends CodexDailyUsageMetrics {
+  client_id?: string;
+  clientId?: string;
+}
+
+export interface CodexDailyUsageDay {
+  date?: string;
+  totals?: CodexDailyUsageMetrics;
+  clients?: CodexDailyUsageClient[];
+}
+
+export interface CodexDailyUsagePayload {
+  data?: CodexDailyUsageDay[];
+}
+
 // Claude API payload types
 export interface ClaudeUsageWindow {
   utilization: number;
@@ -238,10 +268,69 @@ export interface CodexQuotaWindow {
   resetLabel: string;
 }
 
+export type CodexAnalyticsRangeId = 'since-reset' | 'month-to-date' | 'rolling';
+
+export interface CodexAnalyticsClientSummary {
+  clientId: string;
+  credits: number;
+  usd: number;
+  tokens: number;
+  threads: number;
+  turns: number;
+}
+
+export interface CodexAnalyticsRange {
+  id: CodexAnalyticsRangeId;
+  labelKey: string;
+  startDate: string;
+  endDateExclusive: string;
+  returnedDays: number;
+  firstDate: string;
+  lastDate: string;
+  credits: number;
+  usd: number;
+  tokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  threads: number;
+  turns: number;
+  users: number;
+  topClients: CodexAnalyticsClientSummary[];
+}
+
+export interface CodexWeeklyEstimate {
+  usedPercent: number;
+  usedRatio: number;
+  remainingRatio: number;
+  includedCredits: number;
+  resetDayCredits: number;
+  excludedCredits: number;
+  totalCreditsWithResetDay: number;
+  totalUsdWithResetDay: number;
+  totalCreditsWithoutResetDay: number;
+  totalUsdWithoutResetDay: number;
+  remainingCreditsWithResetDay: number;
+  remainingUsdWithResetDay: number;
+  remainingCreditsWithoutResetDay: number;
+  remainingUsdWithoutResetDay: number;
+}
+
+export interface CodexAnalyticsState {
+  dateBucket: 'UTC';
+  backendNowLabel: string;
+  windowStartLabel: string;
+  resetAtLabel: string;
+  weeklyEstimate: CodexWeeklyEstimate | null;
+  ranges: CodexAnalyticsRange[];
+}
+
 export interface CodexQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   windows: CodexQuotaWindow[];
   planType?: string | null;
+  analytics?: CodexAnalyticsState | null;
+  analyticsError?: string | null;
   error?: string;
   errorStatus?: number;
 }

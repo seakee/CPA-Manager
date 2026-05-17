@@ -5,6 +5,7 @@
 import React from 'react';
 import type { ReactNode } from 'react';
 import type { TFunction } from 'i18next';
+import { IconChevronDown, IconInfo } from '@/components/ui/icons';
 import type {
   AntigravityQuotaGroup,
   AntigravityModelsPayload,
@@ -15,6 +16,9 @@ import type {
   ClaudeQuotaState,
   ClaudeQuotaWindow,
   ClaudeUsagePayload,
+  CodexAnalyticsRange,
+  CodexAnalyticsState,
+  CodexDailyUsagePayload,
   CodexQuotaState,
   CodexQuotaWindow,
   CodexUsagePayload,
@@ -31,6 +35,7 @@ import {
   apiCallApi,
   authFilesApi,
   getApiCallErrorMessage,
+  requestCodexDailyUsageRaw,
   requestCodexUsageRaw,
 } from '@/services/api';
 import { useQuotaStore } from '@/stores';
@@ -41,6 +46,7 @@ import {
   CLAUDE_USAGE_URL,
   CLAUDE_REQUEST_HEADERS,
   CLAUDE_USAGE_WINDOW_KEYS,
+  CODEX_ANALYTICS_ROLLING_DAYS,
   GEMINI_CLI_QUOTA_URL,
   GEMINI_CLI_CODE_ASSIST_URL,
   GEMINI_CLI_REQUEST_HEADERS,
@@ -59,10 +65,13 @@ import {
   resolveCodexChatgptAccountId,
   resolveCodexPlanType,
   resolveGeminiCliProjectId,
+  buildCodexAnalyticsQueryRanges,
+  buildCodexAnalyticsState,
   formatQuotaResetTime,
   formatKimiResetHint,
   buildAntigravityQuotaGroups,
   buildCodexQuotaWindowInfos,
+  classifyCodexRateLimitWindows,
   buildGeminiCliQuotaBuckets,
   buildKimiQuotaRows,
   createStatusError,
@@ -245,10 +254,73 @@ const buildCodexQuotaWindows = (payload: CodexUsagePayload, t: TFunction): Codex
     resetLabel: window.resetLabel,
   }));
 
+const fetchCodexDailyUsage = async (
+  authIndex: string,
+  accountId: string | null,
+  startDate: string,
+  endDateExclusive: string,
+  t: TFunction
+): Promise<CodexDailyUsagePayload> => {
+  const { result, payload } = await requestCodexDailyUsageRaw({
+    authIndex,
+    accountId,
+    startDate,
+    endDateExclusive,
+  });
+
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+  }
+
+  if (!payload) {
+    throw new Error(t('codex_quota.analytics_empty'));
+  }
+
+  return payload;
+};
+
+const fetchCodexAnalytics = async (
+  authIndex: string,
+  accountId: string | null,
+  usagePayload: CodexUsagePayload,
+  t: TFunction
+): Promise<CodexAnalyticsState> => {
+  const rateLimit = usagePayload.rate_limit ?? usagePayload.rateLimit ?? null;
+  const weeklyWindow = classifyCodexRateLimitWindows(rateLimit).weeklyWindow;
+  const ranges = buildCodexAnalyticsQueryRanges(weeklyWindow);
+  if (!weeklyWindow || !ranges) {
+    throw new Error(t('codex_quota.analytics_missing_weekly_window'));
+  }
+
+  const [sinceResetPayload, monthPayload, rollingPayload] = await Promise.all([
+    fetchCodexDailyUsage(
+      authIndex,
+      accountId,
+      ranges.sinceResetStartDate,
+      ranges.endDateExclusive,
+      t
+    ),
+    fetchCodexDailyUsage(authIndex, accountId, ranges.monthStartDate, ranges.endDateExclusive, t),
+    fetchCodexDailyUsage(authIndex, accountId, ranges.rollingStartDate, ranges.endDateExclusive, t),
+  ]);
+
+  return buildCodexAnalyticsState({
+    weeklyWindow,
+    sinceResetPayload,
+    monthPayload,
+    rollingPayload,
+  });
+};
+
 const fetchCodexQuota = async (
   file: AuthFileItem,
   t: TFunction
-): Promise<{ planType: string | null; windows: CodexQuotaWindow[] }> => {
+): Promise<{
+  planType: string | null;
+  windows: CodexQuotaWindow[];
+  analytics: CodexAnalyticsState | null;
+  analyticsError: string | null;
+}> => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
   const authIndex = normalizeAuthIndex(rawAuthIndex);
   if (!authIndex) {
@@ -269,7 +341,21 @@ const fetchCodexQuota = async (
 
   const planTypeFromUsage = normalizePlanType(payload.plan_type ?? payload.planType);
   const windows = buildCodexQuotaWindows(payload, t);
-  return { planType: planTypeFromUsage ?? planTypeFromFile, windows };
+  let analytics: CodexAnalyticsState | null = null;
+  let analyticsError: string | null = null;
+
+  try {
+    analytics = await fetchCodexAnalytics(authIndex, accountId, payload, t);
+  } catch (err: unknown) {
+    analyticsError = err instanceof Error ? err.message : t('common.unknown_error');
+  }
+
+  return {
+    planType: planTypeFromUsage ?? planTypeFromFile,
+    windows,
+    analytics,
+    analyticsError,
+  };
 };
 
 const GEMINI_CLI_G1_CREDIT_TYPE = 'GOOGLE_ONE_AI';
@@ -560,6 +646,26 @@ const renderAntigravityItems = (
 
 const PREMIUM_GEMINI_CLI_TIER_IDS = new Set(['g1-ultra-tier']);
 const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
+const CODEX_STANDARD_NUMBER_FORMATTER = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 2,
+});
+
+const formatCodexPlainIntegerNumber = (value: number): string => String(Math.round(value));
+
+const formatCodexStandardNumber = (value: number): string =>
+  CODEX_STANDARD_NUMBER_FORMATTER.format(value);
+
+const formatCodexUsd = (value: number): string => `$${value.toFixed(2)}`;
+
+const codexYmdUtc = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+const formatCodexAnalyticsDateRange = (range: CodexAnalyticsRange): string => {
+  const endMs = Date.parse(`${range.endDateExclusive}T00:00:00Z`);
+  if (!Number.isFinite(endMs)) {
+    return `${range.startDate} - ${range.endDateExclusive}`;
+  }
+  return `${range.startDate} - ${codexYmdUtc(endMs - 24 * 60 * 60 * 1000)}`;
+};
 
 const getCodexPlanLabel = (planType: string | null | undefined, t: TFunction): string | null => {
   const normalized = normalizePlanType(planType);
@@ -611,6 +717,49 @@ const renderCodexItems = (
   const planLabel = getCodexPlanLabel(planType, t);
   const isPremiumPlan = PREMIUM_CODEX_PLAN_TYPES.has(normalizePlanType(planType) ?? '');
   const nodes: ReactNode[] = [];
+  const analytics = quota.analytics ?? null;
+  const analyticsError = quota.analyticsError ?? null;
+  const analyticsDetailNodes: ReactNode[] = [];
+  const creditsUnit = t('codex_quota.credits_unit');
+  const weeklyEstimate = analytics?.weeklyEstimate ?? null;
+  const weeklyInlineEstimate = weeklyEstimate
+    ? t('codex_quota.weekly_estimate_inline', {
+        total: formatCodexPlainIntegerNumber(weeklyEstimate.totalCreditsWithResetDay),
+      })
+    : null;
+  const weeklyUsdInlineEstimate = weeklyEstimate
+    ? t('codex_quota.weekly_estimate_usd_inline', {
+        usd: formatCodexPlainIntegerNumber(weeklyEstimate.totalUsdWithResetDay),
+      })
+    : null;
+  const weeklyInlineEstimateTitle = weeklyEstimate
+    ? t('codex_quota.weekly_estimate_inline_title', {
+        withoutResetDay: formatCodexPlainIntegerNumber(weeklyEstimate.totalCreditsWithoutResetDay),
+        withResetDay: formatCodexPlainIntegerNumber(weeklyEstimate.totalCreditsWithResetDay),
+      })
+    : null;
+
+  const renderCodexMetric = (
+    key: string,
+    label: string,
+    value: string,
+    tone?: 'strong'
+  ): ReactNode =>
+    h(
+      'div',
+      { key, className: styleMap.codexMetric },
+      h('span', { className: styleMap.codexMetricLabel }, label),
+      h(
+        'span',
+        {
+          className:
+            tone === 'strong'
+              ? `${styleMap.codexMetricValue} ${styleMap.codexMetricValueStrong}`
+              : styleMap.codexMetricValue,
+        },
+        value
+      )
+    );
 
   if (planLabel) {
     const valueClass = isPremiumPlan ? styleMap.premiumPlanValue : styleMap.codexPlanValue;
@@ -619,7 +768,17 @@ const renderCodexItems = (
         'div',
         { key: 'plan', className: styleMap.codexPlan },
         h('span', { className: styleMap.codexPlanLabel }, t('codex_quota.plan_label')),
-        h('span', { className: valueClass }, planLabel)
+        h('span', { className: valueClass }, planLabel),
+        weeklyUsdInlineEstimate
+          ? h(
+              'span',
+              {
+                className: styleMap.codexPlanEstimate,
+                title: weeklyInlineEstimateTitle ?? undefined,
+              },
+              weeklyUsdInlineEstimate
+            )
+          : null
       )
     );
   }
@@ -628,41 +787,172 @@ const renderCodexItems = (
     nodes.push(
       h('div', { key: 'empty', className: styleMap.quotaMessage }, t('codex_quota.empty_windows'))
     );
-    return h(Fragment, null, ...nodes);
-  }
+  } else {
+    nodes.push(
+      ...windows.map((window) => {
+        const used = window.usedPercent;
+        const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
+        const remaining =
+          clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
+        const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
+        const windowLabel = window.labelKey
+          ? t(window.labelKey, window.labelParams as Record<string, string | number>)
+          : window.label;
+        const windowLabelNode =
+          window.id === 'weekly' && weeklyInlineEstimate
+            ? h(
+                'span',
+                { className: styleMap.codexQuotaLabel },
+                h('span', { className: styleMap.codexQuotaLabelText }, windowLabel),
+                h(
+                  'span',
+                  {
+                    className: styleMap.codexWeeklyInlineEstimate,
+                    title: weeklyInlineEstimateTitle ?? undefined,
+                  },
+                  weeklyInlineEstimate
+                )
+              )
+            : windowLabel;
 
-  nodes.push(
-    ...windows.map((window) => {
-      const used = window.usedPercent;
-      const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
-      const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
-      const windowLabel = window.labelKey
-        ? t(window.labelKey, window.labelParams as Record<string, string | number>)
-        : window.label;
-
-      return h(
-        'div',
-        { key: window.id, className: styleMap.quotaRow },
-        h(
+        return h(
           'div',
-          { className: styleMap.quotaRowHeader },
-          h('span', { className: styleMap.quotaModel }, windowLabel),
+          { key: window.id, className: styleMap.quotaRow },
           h(
             'div',
-            { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
-            h('span', { className: styleMap.quotaReset }, window.resetLabel)
+            { className: styleMap.quotaRowHeader },
+            h('span', { className: styleMap.quotaModel }, windowLabelNode),
+            h(
+              'div',
+              { className: styleMap.quotaMeta },
+              h('span', { className: styleMap.quotaPercent }, percentLabel),
+              h('span', { className: styleMap.quotaReset }, window.resetLabel)
+            )
+          ),
+          h(QuotaProgressBar, {
+            percent: remaining,
+            highThreshold: QUOTA_PROGRESS_HIGH_THRESHOLD,
+            mediumThreshold: QUOTA_PROGRESS_MEDIUM_THRESHOLD,
+          })
+        );
+      })
+    );
+  }
+
+  if (analyticsError) {
+    analyticsDetailNodes.push(
+      h(
+        'div',
+        { key: 'analytics-error', className: styleMap.quotaWarning },
+        t('codex_quota.analytics_load_failed', { message: analyticsError })
+      )
+    );
+  }
+
+  if (analytics) {
+    analyticsDetailNodes.push(
+      h(
+        'div',
+        { key: 'analytics', className: styleMap.codexAnalytics },
+        h(
+          'div',
+          { className: styleMap.codexAnalyticsHeader },
+          h('span', { className: styleMap.codexAnalyticsTitle }, t('codex_quota.analytics_title')),
+          h(
+            'span',
+            { className: styleMap.codexAnalyticsMeta },
+            t('codex_quota.analytics_bucket', { bucket: analytics.dateBucket })
           )
         ),
-        h(QuotaProgressBar, {
-          percent: remaining,
-          highThreshold: QUOTA_PROGRESS_HIGH_THRESHOLD,
-          mediumThreshold: QUOTA_PROGRESS_MEDIUM_THRESHOLD,
-        })
-      );
-    })
-  );
+        h(
+          'div',
+          { className: styleMap.codexWindowFacts },
+          h(
+            'span',
+            null,
+            t('codex_quota.analytics_backend_now', { time: analytics.backendNowLabel })
+          ),
+          h(
+            'span',
+            null,
+            t('codex_quota.analytics_window_start', { time: analytics.windowStartLabel })
+          ),
+          h('span', null, t('codex_quota.analytics_reset_at', { time: analytics.resetAtLabel }))
+        ),
+        h(
+          'div',
+          { className: styleMap.codexUsageRanges },
+          ...analytics.ranges.map((range) => {
+            const rangeLabel =
+              range.id === 'rolling'
+                ? t(range.labelKey, { days: CODEX_ANALYTICS_ROLLING_DAYS })
+                : t(range.labelKey);
+            const dateLabel = formatCodexAnalyticsDateRange(range);
+
+            return h(
+              'div',
+              { key: range.id, className: styleMap.codexUsageRange },
+              h(
+                'div',
+                { className: styleMap.codexUsageRangeHeader },
+                h('span', { className: styleMap.codexUsageRangeTitle }, rangeLabel),
+                h('span', { className: styleMap.codexUsageRangeDates }, dateLabel)
+              ),
+              h(
+                'div',
+                { className: styleMap.codexMetricGrid },
+                renderCodexMetric(
+                  `${range.id}-credits`,
+                  t('codex_quota.analytics_credits'),
+                  `${formatCodexStandardNumber(range.credits)} ${creditsUnit}`,
+                  'strong'
+                ),
+                renderCodexMetric(
+                  `${range.id}-usd`,
+                  t('codex_quota.analytics_usd'),
+                  formatCodexUsd(range.usd)
+                )
+              )
+            );
+          })
+        )
+      )
+    );
+  }
+
+  if (analyticsDetailNodes.length > 0) {
+    nodes.push(
+      h(
+        'details',
+        { key: 'analytics-details', className: styleMap.codexDetails },
+        h(
+          'summary',
+          { className: styleMap.codexDetailsSummary },
+          h(
+            'span',
+            { className: styleMap.codexDetailsSummaryMain },
+            h(
+              'span',
+              { className: styleMap.codexDetailsIcon, 'aria-hidden': true },
+              h(IconInfo, { size: 13 })
+            ),
+            h(
+              'span',
+              { className: styleMap.codexDetailsTitle },
+              t('codex_quota.analytics_details_summary')
+            )
+          ),
+          h(
+            'span',
+            { className: styleMap.codexDetailsHint },
+            t('codex_quota.analytics_details_hint')
+          ),
+          h(IconChevronDown, { size: 14, className: styleMap.codexDetailsChevron })
+        ),
+        h('div', { className: styleMap.codexDetailsBody }, ...analyticsDetailNodes)
+      )
+    );
+  }
 
   return h(Fragment, null, ...nodes);
 };
@@ -1033,7 +1323,12 @@ export const ANTIGRAVITY_CONFIG: QuotaConfig<AntigravityQuotaState, AntigravityQ
 
 export const CODEX_CONFIG: QuotaConfig<
   CodexQuotaState,
-  { planType: string | null; windows: CodexQuotaWindow[] }
+  {
+    planType: string | null;
+    windows: CodexQuotaWindow[];
+    analytics: CodexAnalyticsState | null;
+    analyticsError: string | null;
+  }
 > = {
   type: 'codex',
   i18nPrefix: 'codex_quota',
@@ -1042,15 +1337,24 @@ export const CODEX_CONFIG: QuotaConfig<
   fetchQuota: fetchCodexQuota,
   storeSelector: (state) => state.codexQuota,
   storeSetter: 'setCodexQuota',
-  buildLoadingState: () => ({ status: 'loading', windows: [] }),
+  buildLoadingState: () => ({
+    status: 'loading',
+    windows: [],
+    analytics: null,
+    analyticsError: null,
+  }),
   buildSuccessState: (data) => ({
     status: 'success',
     windows: data.windows,
     planType: data.planType,
+    analytics: data.analytics,
+    analyticsError: data.analyticsError,
   }),
   buildErrorState: (message, status) => ({
     status: 'error',
     windows: [],
+    analytics: null,
+    analyticsError: null,
     error: message,
     errorStatus: status,
   }),

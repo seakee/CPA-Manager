@@ -2,7 +2,14 @@
  * Normalization and parsing functions for quota data.
  */
 
-import type { ClaudeUsagePayload, CodexUsagePayload, GeminiCliCodeAssistPayload, GeminiCliQuotaPayload, KimiUsagePayload } from '@/types';
+import type {
+  ClaudeUsagePayload,
+  CodexDailyUsagePayload,
+  CodexUsagePayload,
+  GeminiCliCodeAssistPayload,
+  GeminiCliQuotaPayload,
+  KimiUsagePayload,
+} from '@/types';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 
 const GEMINI_CLI_MODEL_SUFFIX = '_vertex';
@@ -174,6 +181,23 @@ export function parseCodexUsagePayload(payload: unknown): CodexUsagePayload | nu
   return null;
 }
 
+export function parseCodexDailyUsagePayload(payload: unknown): CodexDailyUsagePayload | null {
+  if (payload === undefined || payload === null) return null;
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim();
+    if (!trimmed) return null;
+    try {
+      return JSON.parse(trimmed) as CodexDailyUsagePayload;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof payload === 'object') {
+    return payload as CodexDailyUsagePayload;
+  }
+  return null;
+}
+
 export function parseGeminiCliQuotaPayload(payload: unknown): GeminiCliQuotaPayload | null {
   if (payload === undefined || payload === null) return null;
   if (typeof payload === 'string') {
@@ -191,7 +215,9 @@ export function parseGeminiCliQuotaPayload(payload: unknown): GeminiCliQuotaPayl
   return null;
 }
 
-export function parseGeminiCliCodeAssistPayload(payload: unknown): GeminiCliCodeAssistPayload | null {
+export function parseGeminiCliCodeAssistPayload(
+  payload: unknown
+): GeminiCliCodeAssistPayload | null {
   if (payload === undefined || payload === null) return null;
   if (typeof payload === 'string') {
     const trimmed = payload.trim();

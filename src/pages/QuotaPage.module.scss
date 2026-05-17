@@ -281,39 +281,30 @@
 
 // 卡片渐变背景 — 基于 TYPE_COLORS light.bg 转 rgba
 .claudeCard {
-  background-image: linear-gradient(180deg,
-      rgba(251, 236, 228, 0.18),
-      rgba(251, 236, 228, 0));
+  background-image: linear-gradient(180deg, rgba(251, 236, 228, 0.18), rgba(251, 236, 228, 0));
 }
 
 .antigravityCard {
-  background-image: linear-gradient(180deg,
-      rgba(224, 247, 250, 0.12),
-      rgba(224, 247, 250, 0));
+  background-image: linear-gradient(180deg, rgba(224, 247, 250, 0.12), rgba(224, 247, 250, 0));
 }
 
 .codexCard {
-  background-image: linear-gradient(180deg,
-      rgba(234, 231, 255, 0.18),
-      rgba(234, 231, 255, 0));
+  background-image: linear-gradient(180deg, rgba(234, 231, 255, 0.18), rgba(234, 231, 255, 0));
 }
 
 .geminiCliCard {
-  background-image: linear-gradient(180deg,
-      rgba(224, 232, 255, 0.2),
-      rgba(224, 232, 255, 0));
+  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.2), rgba(224, 232, 255, 0));
 }
 
 .kimiCard {
-  background-image: linear-gradient(180deg,
-      rgba(220, 232, 255, 0.2),
-      rgba(220, 232, 255, 0));
+  background-image: linear-gradient(180deg, rgba(220, 232, 255, 0.2), rgba(220, 232, 255, 0));
 }
 
 .quotaSection {
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
+  min-width: 0;
   padding-top: $spacing-sm;
   margin-top: $spacing-xs;
   border-top: 1px dashed var(--border-color);
@@ -447,10 +438,225 @@
   padding: $spacing-xs $spacing-sm;
 }
 
+.codexAnalytics {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.codexDetails {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: $spacing-xs;
+  padding-top: $spacing-sm;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 78%, transparent);
+}
+
+.codexDetailsSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  cursor: pointer;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  &::marker {
+    content: '';
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 3px;
+    border-radius: $radius-sm;
+  }
+
+  @include mobile {
+    .codexDetailsHint {
+      display: none;
+    }
+  }
+}
+
+.codexDetailsSummaryMain {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.codexDetailsIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background-color: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+}
+
+.codexDetailsTitle {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codexDetailsHint {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codexDetailsChevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: transform $transition-fast;
+}
+
+.codexDetails[open] .codexDetailsChevron {
+  transform: rotate(180deg);
+}
+
+.codexDetailsBody {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  min-width: 0;
+  max-width: 100%;
+  padding-top: $spacing-sm;
+}
+
+.codexAnalyticsHeader,
+.codexUsageRangeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.codexAnalyticsTitle,
+.codexUsageRangeTitle {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codexAnalyticsMeta,
+.codexUsageRangeDates {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codexWindowFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.45;
+  min-width: 0;
+
+  span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.codexUsageRange {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-xs;
+  min-width: 0;
+  max-width: 100%;
+  padding-block: $spacing-xs;
+}
+
+.codexUsageRange + .codexUsageRange {
+  border-top: 1px dashed color-mix(in srgb, var(--border-color) 82%, transparent);
+}
+
+.codexMetricGrid {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.codexMetric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-secondary) 78%, transparent);
+}
+
+.codexMetricLabel {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codexMetricValue {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codexMetricValueStrong {
+  color: var(--text-primary);
+}
+
+.codexUsageRanges {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .codexPlan {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -463,6 +669,41 @@
   font-weight: 600;
   color: var(--text-primary);
   text-transform: capitalize;
+}
+
+.codexPlanEstimate {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.codexQuotaLabel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.codexQuotaLabelText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codexWeeklyInlineEstimate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .premiumPlanValue {
@@ -638,7 +879,11 @@
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-  transition: transform $transition-fast, box-shadow $transition-fast, border-color $transition-fast;
+  min-width: 0;
+  transition:
+    transform $transition-fast,
+    box-shadow $transition-fast,
+    border-color $transition-fast;
 
   &:hover {
     transform: translateY(-2px);
@@ -669,6 +914,28 @@
   color: var(--text-primary);
   word-break: break-all;
   line-height: 1.4;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cardRefreshButton:global(.btn.btn-sm) {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-secondary);
+
+  > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--bg-hover);
+  }
 }
 
 .pagination {

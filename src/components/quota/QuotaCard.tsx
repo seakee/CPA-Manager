@@ -5,6 +5,8 @@
 import { useTranslation } from 'react-i18next';
 import type { ReactElement, ReactNode } from 'react';
 import type { TFunction } from 'i18next';
+import { Button } from '@/components/ui/Button';
+import { IconRefreshCw } from '@/components/ui/icons';
 import type { AuthFileItem, ResolvedTheme, ThemeColors } from '@/types';
 import { TYPE_COLORS } from '@/utils/quota';
 import styles from '@/pages/QuotaPage.module.scss';
@@ -26,10 +28,9 @@ export interface QuotaProgressBarProps {
 export function QuotaProgressBar({
   percent,
   highThreshold,
-  mediumThreshold
+  mediumThreshold,
 }: QuotaProgressBarProps) {
-  const clamp = (value: number, min: number, max: number) =>
-    Math.min(max, Math.max(min, value));
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
   const normalized = percent === null ? null : clamp(percent, 0, 100);
   const fillClass =
     normalized === null
@@ -79,7 +80,7 @@ export function QuotaCard<TState extends QuotaStatusState>({
   defaultType,
   canRefresh = false,
   onRefresh,
-  renderQuotaItems
+  renderQuotaItems,
 }: QuotaCardProps<TState>) {
   const { t } = useTranslation();
 
@@ -94,7 +95,11 @@ export function QuotaCard<TState extends QuotaStatusState>({
     quota?.errorStatus,
     quota?.error || t('common.unknown_error')
   );
-  const idleMessageKey = onRefresh ? `${i18nPrefix}.idle` : (cardIdleMessageKey ?? `${i18nPrefix}.idle`);
+  const idleMessageKey = onRefresh
+    ? `${i18nPrefix}.idle`
+    : (cardIdleMessageKey ?? `${i18nPrefix}.idle`);
+  const refreshLabel = t(`${i18nPrefix}.refresh_button`);
+  const refreshButtonLoading = quotaStatus === 'loading';
 
   const getTypeLabel = (type: string): string => {
     const key = `auth_files.filter_${type}`;
@@ -112,12 +117,27 @@ export function QuotaCard<TState extends QuotaStatusState>({
           style={{
             backgroundColor: typeColor.bg,
             color: typeColor.text,
-            ...(typeColor.border ? { border: typeColor.border } : {})
+            ...(typeColor.border ? { border: typeColor.border } : {}),
           }}
         >
           {getTypeLabel(displayType)}
         </span>
         <span className={styles.fileName}>{item.name}</span>
+        {onRefresh && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={styles.cardRefreshButton}
+            onClick={onRefresh}
+            disabled={!canRefresh || refreshButtonLoading}
+            loading={refreshButtonLoading}
+            title={refreshLabel}
+            aria-label={refreshLabel}
+          >
+            {!refreshButtonLoading && <IconRefreshCw size={15} />}
+          </Button>
+        )}
       </div>
 
       <div className={styles.quotaSection}>
@@ -139,7 +159,7 @@ export function QuotaCard<TState extends QuotaStatusState>({
         ) : quotaStatus === 'error' ? (
           <div className={styles.quotaError}>
             {t(`${i18nPrefix}.load_failed`, {
-              message: quotaErrorMessage
+              message: quotaErrorMessage,
             })}
           </div>
         ) : quota ? (
