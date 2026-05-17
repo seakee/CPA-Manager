@@ -24,14 +24,17 @@ import {
   buildCodexInspectionError,
   buildExecutionFailureMessage,
   clearCodexInspectionConfigurableSettings,
+  createCodexInspectionConnectionFingerprint,
   createCodexInspectionSession,
   DEFAULT_CODEX_INSPECTION_SETTINGS,
   CODEX_INSPECTION_AUTO_ACTION_MODES,
   executeCodexInspectionActions,
   isCodexInspectionStoppedError,
   isSuggestedAction,
+  loadCodexInspectionLastRun,
   resolveCodexInspectionAutoActionItems,
   loadCodexInspectionConfigurableSettings,
+  saveCodexInspectionLastRun,
   saveCodexInspectionConfigurableSettings,
   type CodexInspectionAction,
   type CodexInspectionAutoActionMode,
@@ -41,22 +44,19 @@ import {
   type CodexInspectionResultItem,
   type CodexInspectionRunResult,
   type CodexInspectionSession,
+  type CodexInspectionStoredActionFilter,
+  type CodexInspectionStoredLogEntry,
 } from '@/features/monitoring/codexInspection';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import styles from './CodexInspectionPage.module.scss';
 
 type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
 
-type ActionFilter = 'all' | 'delete' | 'disable' | 'enable';
+type ActionFilter = CodexInspectionStoredActionFilter;
 
 type StatusTone = 'idle' | 'info' | 'good' | 'warn' | 'bad';
 
-type InspectionLogEntry = {
-  id: string;
-  level: CodexInspectionLogLevel;
-  message: string;
-  timestamp: number;
-};
+type InspectionLogEntry = CodexInspectionStoredLogEntry;
 
 type ExecutionTriggerSource = 'manual' | 'auto';
 
@@ -184,6 +184,31 @@ const createIdleProgressSnapshot = (): CodexInspectionProgressSnapshot => ({
   updatedAt: Date.now(),
 });
 
+const createCompletedProgressSnapshot = (
+  result: CodexInspectionRunResult
+): CodexInspectionProgressSnapshot => {
+  const total = Math.max(0, result.summary.sampledCount || result.results.length);
+  return {
+    total,
+    completed: total,
+    inFlight: 0,
+    pending: 0,
+    percent: total > 0 ? 100 : 0,
+    status: 'completed',
+    summary: {
+      totalFiles: result.summary.totalFiles,
+      probeSetCount: result.summary.probeSetCount,
+      sampledCount: result.summary.sampledCount,
+      deleteCount: result.summary.deleteCount,
+      disableCount: result.summary.disableCount,
+      enableCount: result.summary.enableCount,
+      keepCount: result.summary.keepCount,
+    },
+    startedAt: result.startedAt,
+    updatedAt: result.finishedAt || Date.now(),
+  };
+};
+
 const filterByAction = (items: CodexInspectionResultItem[], filter: ActionFilter) => {
   if (filter === 'all') return items;
   return items.filter((item) => item.action === filter);
@@ -236,6 +261,19 @@ export function CodexInspectionPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
+  const connectionFingerprint = useMemo(
+    () => createCodexInspectionConnectionFingerprint(apiBase, managementKey),
+    [apiBase, managementKey]
+  );
+  const initialLastRunRef = useRef<ReturnType<typeof loadCodexInspectionLastRun> | undefined>(
+    undefined
+  );
+  if (initialLastRunRef.current === undefined) {
+    initialLastRunRef.current = connectionFingerprint
+      ? loadCodexInspectionLastRun(connectionFingerprint)
+      : null;
+  }
+  const initialLastRun = initialLastRunRef.current;
 
   const [inspectionSettings, setInspectionSettings] = useState<CodexInspectionConfigurableSettings>(() =>
     loadCodexInspectionConfigurableSettings(config)
@@ -244,23 +282,68 @@ export function CodexInspectionPage() {
     toSettingsDraft(loadCodexInspectionConfigurableSettings(config))
   );
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [logs, setLogs] = useState<InspectionLogEntry[]>([]);
-  const [logsCollapsed, setLogsCollapsed] = useState(true);
-  const [runStatus, setRunStatus] = useState<RunStatus>('idle');
-  const [progress, setProgress] = useState<CodexInspectionProgressSnapshot>(createIdleProgressSnapshot);
-  const [result, setResult] = useState<CodexInspectionRunResult | null>(null);
+  const [logs, setLogs] = useState<InspectionLogEntry[]>(() => initialLastRun?.logs ?? []);
+  const [logsCollapsed, setLogsCollapsed] = useState(() => initialLastRun?.logsCollapsed ?? true);
+  const [runStatus, setRunStatus] = useState<RunStatus>(() =>
+    initialLastRun?.result ? 'success' : 'idle'
+  );
+  const [progress, setProgress] = useState<CodexInspectionProgressSnapshot>(() =>
+    initialLastRun?.result
+      ? createCompletedProgressSnapshot(initialLastRun.result)
+      : createIdleProgressSnapshot()
+  );
+  const [result, setResult] = useState<CodexInspectionRunResult | null>(
+    () => initialLastRun?.result ?? null
+  );
+  const [resultConnectionFingerprint, setResultConnectionFingerprint] = useState<string | null>(
+    () => initialLastRun?.connectionFingerprint ?? null
+  );
   const [executing, setExecuting] = useState(false);
-  const [actionFilter, setActionFilter] = useState<ActionFilter>('all');
-  const logCounterRef = useRef(0);
+  const [actionFilter, setActionFilter] = useState<ActionFilter>(
+    () => initialLastRun?.actionFilter ?? 'all'
+  );
+  const logCounterRef = useRef(initialLastRun?.logs.length ?? 0);
   const sessionRef = useRef<CodexInspectionSession | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
+  const restoredConnectionFingerprintRef = useRef<string | null>(connectionFingerprint);
   const logListRef = useRef<HTMLDivElement | null>(null);
   const executeItemsRef = useRef<
     ((
       items: CodexInspectionResultItem[],
-      options?: { resultOverride?: CodexInspectionRunResult | null; source?: ExecutionTriggerSource }
+      options?: {
+        resultOverride?: CodexInspectionRunResult | null;
+        source?: ExecutionTriggerSource;
+        connectionFingerprint?: string | null;
+      }
     ) => Promise<void>) | null
   >(null);
+
+  useEffect(() => {
+    if (restoredConnectionFingerprintRef.current === connectionFingerprint) return;
+    restoredConnectionFingerprintRef.current = connectionFingerprint;
+
+    activeSessionIdRef.current = null;
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    setExecuting(false);
+
+    const restored = connectionFingerprint
+      ? loadCodexInspectionLastRun(connectionFingerprint)
+      : null;
+
+    setLogs(restored?.logs ?? []);
+    setLogsCollapsed(restored?.logsCollapsed ?? true);
+    setRunStatus(restored?.result ? 'success' : 'idle');
+    setProgress(
+      restored?.result
+        ? createCompletedProgressSnapshot(restored.result)
+        : createIdleProgressSnapshot()
+    );
+    setResult(restored?.result ?? null);
+    setResultConnectionFingerprint(restored?.connectionFingerprint ?? null);
+    setActionFilter(restored?.actionFilter ?? 'all');
+    logCounterRef.current = restored?.logs.length ?? 0;
+  }, [connectionFingerprint]);
 
   useEffect(() => {
     const nextSettings = loadCodexInspectionConfigurableSettings(config);
@@ -269,6 +352,27 @@ export function CodexInspectionPage() {
       setSettingsDraft(toSettingsDraft(nextSettings));
     }
   }, [config, isSettingsModalOpen]);
+
+  useEffect(() => {
+    if (!result || result.finishedAt <= 0) return;
+    if (runStatus === 'running' || runStatus === 'paused') return;
+    if (!connectionFingerprint || resultConnectionFingerprint !== connectionFingerprint) return;
+    saveCodexInspectionLastRun({
+      result,
+      logs,
+      logsCollapsed,
+      actionFilter,
+      connectionFingerprint,
+    });
+  }, [
+    actionFilter,
+    connectionFingerprint,
+    logs,
+    logsCollapsed,
+    result,
+    resultConnectionFingerprint,
+    runStatus,
+  ]);
 
   const appendLog = useCallback((level: CodexInspectionLogLevel, message: string) => {
     logCounterRef.current += 1;
@@ -306,7 +410,8 @@ export function CodexInspectionPage() {
     (
       session: CodexInspectionSession,
       promise: Promise<CodexInspectionRunResult>,
-      autoActionMode: CodexInspectionAutoActionMode
+      autoActionMode: CodexInspectionAutoActionMode,
+      runConnectionFingerprint: string | null
     ) => {
       const sessionId = session.id;
 
@@ -319,6 +424,7 @@ export function CodexInspectionPage() {
             nextActionableResults
           );
           setResult(nextResult);
+          setResultConnectionFingerprint(runConnectionFingerprint);
           setProgress(session.getProgress());
           setRunStatus('success');
           setLogsCollapsed(true);
@@ -333,6 +439,7 @@ export function CodexInspectionPage() {
               void executeItemsRef.current(autoTargets, {
                 resultOverride: nextResult,
                 source: 'auto',
+                connectionFingerprint: runConnectionFingerprint,
               });
               return;
             }
@@ -388,8 +495,14 @@ export function CodexInspectionPage() {
         showNotification(message, 'warning');
         return;
       }
+      if (!connectionFingerprint) {
+        const message = t('notification.connection_required');
+        showNotification(message, 'warning');
+        return;
+      }
 
       const autoActionMode = options?.autoActionMode ?? inspectionSettings.autoActionMode;
+      const runConnectionFingerprint = connectionFingerprint;
 
       if (!preserveLogs) {
         setLogs([]);
@@ -399,6 +512,7 @@ export function CodexInspectionPage() {
       }
 
       setResult(null);
+      setResultConnectionFingerprint(runConnectionFingerprint);
       setRunStatus('running');
       setLogsCollapsed(false);
       setActionFilter('all');
@@ -426,19 +540,21 @@ export function CodexInspectionPage() {
         onResultsChange: (nextResult) => {
           if (activeSessionIdRef.current !== session.id) return;
           setResult(nextResult);
+          setResultConnectionFingerprint(runConnectionFingerprint);
         },
       });
 
       sessionRef.current = session;
       activeSessionIdRef.current = session.id;
       setProgress(session.getProgress());
-      attachSessionPromise(session, session.start(), autoActionMode);
+      attachSessionPromise(session, session.start(), autoActionMode, runConnectionFingerprint);
     },
     [
       apiBase,
       appendLog,
       attachSessionPromise,
       config,
+      connectionFingerprint,
       connectionStatus,
       inspectionSettings,
       managementKey,
@@ -473,6 +589,7 @@ export function CodexInspectionPage() {
     setRunStatus('idle');
     setProgress(createIdleProgressSnapshot());
     setResult(null);
+    setResultConnectionFingerprint(null);
     setLogsCollapsed(false);
   }, [appendLog, t]);
 
@@ -482,11 +599,17 @@ export function CodexInspectionPage() {
       options?: {
         resultOverride?: CodexInspectionRunResult | null;
         source?: ExecutionTriggerSource;
+        connectionFingerprint?: string | null;
       }
     ) => {
       const currentResult = options?.resultOverride ?? result;
       const source = options?.source ?? 'manual';
       if (!currentResult) return;
+      const currentResultFingerprint = options?.connectionFingerprint ?? resultConnectionFingerprint;
+      if (!connectionFingerprint || currentResultFingerprint !== connectionFingerprint) {
+        showNotification(t('notification.connection_required'), 'warning');
+        return;
+      }
       const targets = items.filter(isSuggestedAction);
       if (targets.length === 0) {
         showNotification(t('monitoring.codex_inspection_no_pending_actions'), 'info');
@@ -519,6 +642,7 @@ export function CodexInspectionPage() {
         }
         const nextResult = applyCodexInspectionExecutionResult(currentResult, execution);
         setResult(nextResult);
+        setResultConnectionFingerprint(currentResultFingerprint);
 
         if (source === 'auto') {
           const successCount = execution.outcomes.filter((item) => item.success).length;
@@ -543,7 +667,7 @@ export function CodexInspectionPage() {
         setExecuting(false);
       }
     },
-    [appendLog, result, showNotification, t]
+    [appendLog, connectionFingerprint, result, resultConnectionFingerprint, showNotification, t]
   );
 
   useEffect(() => {
