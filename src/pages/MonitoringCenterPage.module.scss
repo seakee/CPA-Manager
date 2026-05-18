@@ -1,3 +1,5 @@
+@use '../styles/mixins.scss' as *;
+
 .page,
 .monitorModal {
   --monitor-bg: var(--bg-secondary);
@@ -741,6 +743,14 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: start;
   gap: 12px;
+
+  @include narrow-laptop {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @include compact-desktop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .filterAccountStack {
@@ -905,10 +915,18 @@
 
 .summaryHero {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+
+  @include narrow-laptop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .summarySub {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+
+  @include narrow-laptop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .summaryCard {
@@ -2142,6 +2160,14 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
+
+  @include narrow-laptop {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @include compact-desktop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .healthMetricItem {
@@ -2378,6 +2404,10 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   align-items: start;
+
+  @include narrow-laptop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .accountOverviewMetricCard {

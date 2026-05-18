@@ -434,6 +434,10 @@
   gap: $spacing-md;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 
+  @include narrow-laptop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   @include tablet {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -448,6 +452,10 @@
   gap: $spacing-md;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 
+  @include narrow-laptop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   @include tablet {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -461,6 +469,10 @@
   display: grid;
   gap: $spacing-md;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+
+  @include narrow-laptop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
   @include tablet {
     grid-template-columns: repeat(2, minmax(0, 1fr));
