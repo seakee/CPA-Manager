@@ -254,6 +254,72 @@ func TestModelListProxyRequiresSetup(t *testing.T) {
 	}
 }
 
+func TestAPIProxyForwardsV1BetaRequests(t *testing.T) {
+	observed := make(chan observedRequest, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed <- observedRequest{
+			path:  r.URL.Path,
+			query: r.URL.RawQuery,
+			auth:  r.Header.Get("Authorization"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":[{"name":"gemini-3-flash-preview"}]}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	handler := newTestHandler(t, upstream.URL, true)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/v1beta/models"},
+		{http.MethodGet, "/v1beta/models/gemini-3-flash-preview"},
+		{http.MethodPost, "/v1beta/models/gemini-3-flash-preview:streamGenerateContent"},
+		{http.MethodPost, "/v1beta/models/gemini-3.1-pro-preview-customtools:streamGenerateContent"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path+"?alt=sse", nil)
+			req.Header.Set("X-Goog-Api-Key", "test-api-key")
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+
+			var got observedRequest
+			select {
+			case got = <-observed:
+			default:
+				t.Fatal("upstream was not called")
+			}
+			if got.path != tc.path {
+				t.Fatalf("proxied path = %q, want %q", got.path, tc.path)
+			}
+			if got.query != "alt=sse" {
+				t.Fatalf("proxied query = %q, want alt=sse", got.query)
+			}
+		})
+	}
+}
+
+func TestAPIProxyRequiresSetup(t *testing.T) {
+	handler := newTestHandler(t, "", false)
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "usage service is not configured") {
+		t.Fatalf("response body = %s", rr.Body.String())
+	}
+}
+
 func TestSetupRejectsDifferentUpstreamWithoutExistingAuthorization(t *testing.T) {
 	currentUpstream := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(currentUpstream.Close)
