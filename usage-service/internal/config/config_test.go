@@ -130,6 +130,27 @@ func TestLoadEnvOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestNormalizeCollectorMode(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"", "auto"},
+		{"AUTO", "auto"},
+		{"http", "http"},
+		{"HTTP", "http"},
+		{"resp", "resp"},
+		{"subscribe", "subscribe"},
+		{" Subscribe ", "subscribe"},
+		{"unknown", "auto"},
+	}
+	for _, tc := range cases {
+		if got := normalizeCollectorMode(tc.input); got != tc.want {
+			t.Errorf("normalizeCollectorMode(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{

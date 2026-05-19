@@ -12,35 +12,36 @@ import (
 )
 
 type Event struct {
-	RequestID            string `json:"request_id,omitempty"`
-	EventHash            string `json:"event_hash"`
-	TimestampMS          int64  `json:"timestamp_ms"`
-	Timestamp            string `json:"timestamp"`
-	Provider             string `json:"provider,omitempty"`
-	Model                string `json:"model"`
-	Endpoint             string `json:"endpoint,omitempty"`
-	Method               string `json:"method,omitempty"`
-	Path                 string `json:"path,omitempty"`
-	AuthType             string `json:"auth_type,omitempty"`
-	AuthIndex            string `json:"auth_index,omitempty"`
-	Source               string `json:"source,omitempty"`
-	SourceHash           string `json:"source_hash,omitempty"`
-	APIKeyHash           string `json:"api_key_hash,omitempty"`
-	AccountSnapshot      string `json:"account_snapshot,omitempty"`
-	AuthLabelSnapshot    string `json:"auth_label_snapshot,omitempty"`
-	AuthFileSnapshot     string `json:"auth_file_snapshot,omitempty"`
-	AuthProviderSnapshot string `json:"auth_provider_snapshot,omitempty"`
-	AuthSnapshotAtMS     int64  `json:"auth_snapshot_at_ms,omitempty"`
-	InputTokens          int64  `json:"input_tokens"`
-	OutputTokens         int64  `json:"output_tokens"`
-	ReasoningTokens      int64  `json:"reasoning_tokens"`
-	CachedTokens         int64  `json:"cached_tokens"`
-	CacheTokens          int64  `json:"cache_tokens"`
-	TotalTokens          int64  `json:"total_tokens"`
-	LatencyMS            *int64 `json:"latency_ms,omitempty"`
-	Failed               bool   `json:"failed"`
-	RawJSON              string `json:"raw_json,omitempty"`
-	CreatedAtMS          int64  `json:"created_at_ms"`
+	RequestID             string `json:"request_id,omitempty"`
+	EventHash             string `json:"event_hash"`
+	TimestampMS           int64  `json:"timestamp_ms"`
+	Timestamp             string `json:"timestamp"`
+	Provider              string `json:"provider,omitempty"`
+	Model                 string `json:"model"`
+	Endpoint              string `json:"endpoint,omitempty"`
+	Method                string `json:"method,omitempty"`
+	Path                  string `json:"path,omitempty"`
+	AuthType              string `json:"auth_type,omitempty"`
+	AuthIndex             string `json:"auth_index,omitempty"`
+	Source                string `json:"source,omitempty"`
+	SourceHash            string `json:"source_hash,omitempty"`
+	APIKeyHash            string `json:"api_key_hash,omitempty"`
+	AccountSnapshot       string `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot     string `json:"auth_label_snapshot,omitempty"`
+	AuthFileSnapshot      string `json:"auth_file_snapshot,omitempty"`
+	AuthProviderSnapshot  string `json:"auth_provider_snapshot,omitempty"`
+	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
+	AuthSnapshotAtMS      int64  `json:"auth_snapshot_at_ms,omitempty"`
+	InputTokens           int64  `json:"input_tokens"`
+	OutputTokens          int64  `json:"output_tokens"`
+	ReasoningTokens       int64  `json:"reasoning_tokens"`
+	CachedTokens          int64  `json:"cached_tokens"`
+	CacheTokens           int64  `json:"cache_tokens"`
+	TotalTokens           int64  `json:"total_tokens"`
+	LatencyMS             *int64 `json:"latency_ms,omitempty"`
+	Failed                bool   `json:"failed"`
+	RawJSON               string `json:"raw_json,omitempty"`
+	CreatedAtMS           int64  `json:"created_at_ms"`
 }
 
 type Tokens struct {
@@ -53,18 +54,19 @@ type Tokens struct {
 }
 
 type Detail struct {
-	Timestamp            string `json:"timestamp"`
-	Source               string `json:"source"`
-	AuthIndex            string `json:"auth_index,omitempty"`
-	APIKeyHash           string `json:"api_key_hash,omitempty"`
-	AccountSnapshot      string `json:"account_snapshot,omitempty"`
-	AuthLabelSnapshot    string `json:"auth_label_snapshot,omitempty"`
-	AuthFileSnapshot     string `json:"auth_file_snapshot,omitempty"`
-	AuthProviderSnapshot string `json:"auth_provider_snapshot,omitempty"`
-	AuthSnapshotAtMS     int64  `json:"auth_snapshot_at_ms,omitempty"`
-	LatencyMS            *int64 `json:"latency_ms,omitempty"`
-	Tokens               Tokens `json:"tokens"`
-	Failed               bool   `json:"failed"`
+	Timestamp             string `json:"timestamp"`
+	Source                string `json:"source"`
+	AuthIndex             string `json:"auth_index,omitempty"`
+	APIKeyHash            string `json:"api_key_hash,omitempty"`
+	AccountSnapshot       string `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot     string `json:"auth_label_snapshot,omitempty"`
+	AuthFileSnapshot      string `json:"auth_file_snapshot,omitempty"`
+	AuthProviderSnapshot  string `json:"auth_provider_snapshot,omitempty"`
+	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
+	AuthSnapshotAtMS      int64  `json:"auth_snapshot_at_ms,omitempty"`
+	LatencyMS             *int64 `json:"latency_ms,omitempty"`
+	Tokens                Tokens `json:"tokens"`
+	Failed                bool   `json:"failed"`
 }
 
 type ModelAggregate struct {
@@ -132,34 +134,35 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	authIndex := readString(record, "auth_index", "authIndex", "AuthIndex")
 
 	event := Event{
-		RequestID:            readString(record, "request_id", "requestId", "id"),
-		TimestampMS:          timestampMS,
-		Timestamp:            timestamp,
-		Provider:             readString(record, "provider", "type", "auth_type", "authType"),
-		Model:                readString(record, "model", "model_name", "modelName"),
-		Endpoint:             endpoint,
-		Method:               method,
-		Path:                 path,
-		AuthType:             readString(record, "auth_type", "authType"),
-		AuthIndex:            authIndex,
-		Source:               source,
-		SourceHash:           hashString(sourceRaw),
-		APIKeyHash:           hashString(apiKey),
-		AccountSnapshot:      readString(record, "account_snapshot", "accountSnapshot"),
-		AuthLabelSnapshot:    readString(record, "auth_label_snapshot", "authLabelSnapshot"),
-		AuthFileSnapshot:     readString(record, "auth_file_snapshot", "authFileSnapshot"),
-		AuthProviderSnapshot: readString(record, "auth_provider_snapshot", "authProviderSnapshot"),
-		AuthSnapshotAtMS:     readInt(record, "auth_snapshot_at_ms", "authSnapshotAtMs"),
-		InputTokens:          inputTokens,
-		OutputTokens:         outputTokens,
-		ReasoningTokens:      reasoningTokens,
-		CachedTokens:         cachedTokens,
-		CacheTokens:          cacheTokens,
-		TotalTokens:          totalTokens,
-		LatencyMS:            latencyMS,
-		Failed:               failed,
-		RawJSON:              string(redactedJSON),
-		CreatedAtMS:          time.Now().UnixMilli(),
+		RequestID:             readString(record, "request_id", "requestId", "id"),
+		TimestampMS:           timestampMS,
+		Timestamp:             timestamp,
+		Provider:              readString(record, "provider", "type", "auth_type", "authType"),
+		Model:                 readString(record, "model", "model_name", "modelName"),
+		Endpoint:              endpoint,
+		Method:                method,
+		Path:                  path,
+		AuthType:              readString(record, "auth_type", "authType"),
+		AuthIndex:             authIndex,
+		Source:                source,
+		SourceHash:            hashString(sourceRaw),
+		APIKeyHash:            hashString(apiKey),
+		AccountSnapshot:       readString(record, "account_snapshot", "accountSnapshot"),
+		AuthLabelSnapshot:     readString(record, "auth_label_snapshot", "authLabelSnapshot"),
+		AuthFileSnapshot:      readString(record, "auth_file_snapshot", "authFileSnapshot"),
+		AuthProviderSnapshot:  readString(record, "auth_provider_snapshot", "authProviderSnapshot"),
+		AuthProjectIDSnapshot: readString(record, "auth_project_id_snapshot", "authProjectIdSnapshot", "project_id", "projectId"),
+		AuthSnapshotAtMS:      readInt(record, "auth_snapshot_at_ms", "authSnapshotAtMs"),
+		InputTokens:           inputTokens,
+		OutputTokens:          outputTokens,
+		ReasoningTokens:       reasoningTokens,
+		CachedTokens:          cachedTokens,
+		CacheTokens:           cacheTokens,
+		TotalTokens:           totalTokens,
+		LatencyMS:             latencyMS,
+		Failed:                failed,
+		RawJSON:               string(redactedJSON),
+		CreatedAtMS:           time.Now().UnixMilli(),
 	}
 	if event.Model == "" {
 		event.Model = "-"
@@ -198,17 +201,18 @@ func BuildPayload(events []Event) Payload {
 			apiEntry.Models[model] = modelEntry
 		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
-			Timestamp:            event.Timestamp,
-			Source:               event.Source,
-			AuthIndex:            event.AuthIndex,
-			APIKeyHash:           event.APIKeyHash,
-			AccountSnapshot:      event.AccountSnapshot,
-			AuthLabelSnapshot:    event.AuthLabelSnapshot,
-			AuthFileSnapshot:     event.AuthFileSnapshot,
-			AuthProviderSnapshot: event.AuthProviderSnapshot,
-			AuthSnapshotAtMS:     event.AuthSnapshotAtMS,
-			LatencyMS:            event.LatencyMS,
-			Failed:               event.Failed,
+			Timestamp:             event.Timestamp,
+			Source:                event.Source,
+			AuthIndex:             event.AuthIndex,
+			APIKeyHash:            event.APIKeyHash,
+			AccountSnapshot:       event.AccountSnapshot,
+			AuthLabelSnapshot:     event.AuthLabelSnapshot,
+			AuthFileSnapshot:      event.AuthFileSnapshot,
+			AuthProviderSnapshot:  event.AuthProviderSnapshot,
+			AuthProjectIDSnapshot: event.AuthProjectIDSnapshot,
+			AuthSnapshotAtMS:      event.AuthSnapshotAtMS,
+			LatencyMS:             event.LatencyMS,
+			Failed:                event.Failed,
 			Tokens: Tokens{
 				InputTokens:     event.InputTokens,
 				OutputTokens:    event.OutputTokens,

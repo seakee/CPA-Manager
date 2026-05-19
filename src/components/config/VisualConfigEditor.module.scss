@@ -677,6 +677,34 @@
   grid-template-columns: 160px 1fr auto;
 }
 
+.payloadModelGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.payloadModelAdvanced {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+}
+
+.payloadAdvancedGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.payloadHeaderRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .payloadRuleParamRow {
   display: grid;
   grid-template-columns: 1fr 140px 1fr auto;
@@ -722,6 +750,7 @@
 @media (max-width: 900px) {
   .payloadRuleModelRow,
   .payloadRuleModelRowProtocolFirst,
+  .payloadHeaderRow,
   .payloadRuleParamRow,
   .payloadFilterModelRow {
     grid-template-columns: minmax(0, 1fr);

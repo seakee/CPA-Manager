@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,13 @@ func (m *Manager) setStatus(update func(*Status)) {
 func (m *Manager) run(ctx context.Context, cfg RuntimeConfig) {
 	mode := collectorMode(valueOr(cfg.CollectorMode, m.base.CollectorMode))
 
+	if mode == "subscribe" {
+		m.runSubscribe(ctx, cfg, mode)
+		return
+	}
+	if mode == "auto" && m.runSubscribe(ctx, cfg, mode) {
+		return
+	}
 	if mode == "http" {
 		m.runHTTP(ctx, cfg, mode)
 		return
@@ -115,6 +123,129 @@ func (m *Manager) run(ctx context.Context, cfg RuntimeConfig) {
 		return
 	}
 	m.runRESP(ctx, cfg)
+}
+
+// runSubscribe 走 Redis Pub/Sub 订阅模式（CPA v7.0.7+）。返回值含义：
+//   - true：ctx 已取消或永久退出，调用方无需降级
+//   - false：协议不支持，且 mode=auto 时应降级到 HTTP/RESP
+//
+// mode=auto 时仅"首次探测"失败才降级；一旦订阅成功后再次断连则坚持订阅模式重连。
+func (m *Manager) runSubscribe(ctx context.Context, cfg RuntimeConfig, mode string) bool {
+	channel := valueOr(cfg.Queue, m.base.Queue)
+	backoff := time.Second
+	subscribed := false
+
+	fallback := func() bool {
+		m.setStatus(func(status *Status) {
+			status.Collector = "starting"
+			status.Transport = "http"
+			status.LastError = ""
+		})
+		return false
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return true
+		}
+		client, err := resp.Dial(cfg.CPAUpstreamURL, cfg.TLSSkipVerify)
+		if err != nil {
+			if mode == "auto" && !subscribed {
+				return fallback()
+			}
+			m.markError("connect", err)
+			sleep(ctx, backoff)
+			backoff = nextBackoff(backoff)
+			continue
+		}
+		if err := client.Auth(cfg.ManagementKey); err != nil {
+			_ = client.Close()
+			if mode == "auto" && !subscribed {
+				return fallback()
+			}
+			m.markError("auth", err)
+			sleep(ctx, backoff)
+			backoff = nextBackoff(backoff)
+			continue
+		}
+		if err := client.Subscribe(channel); err != nil {
+			_ = client.Close()
+			if mode == "auto" && !subscribed {
+				return fallback()
+			}
+			m.markError("subscribe", err)
+			sleep(ctx, backoff)
+			backoff = nextBackoff(backoff)
+			continue
+		}
+		subscribed = true
+		backoff = time.Second
+		m.setStatus(func(status *Status) {
+			status.Collector = "running"
+			status.Transport = "subscribe"
+			status.LastError = ""
+		})
+
+		err = m.consumeSubscribe(ctx, cfg, client)
+		_ = client.Close()
+		if ctx.Err() != nil {
+			return true
+		}
+		if err != nil {
+			m.markError("subscribe", err)
+			sleep(ctx, backoff)
+			backoff = nextBackoff(backoff)
+		}
+	}
+}
+
+func (m *Manager) consumeSubscribe(ctx context.Context, cfg RuntimeConfig, client *resp.Client) error {
+	const pingInterval = 30 * time.Second
+	const readWindow = pingInterval + 10*time.Second
+
+	// 通过后台 goroutine 监听 ctx，触发读超时让阻塞中的 ReadMessage 立即返回。
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = client.SetReadDeadline(time.Now())
+		case <-done:
+		}
+	}()
+
+	lastPing := time.Now()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := client.SetReadDeadline(time.Now().Add(readWindow)); err != nil {
+			return err
+		}
+		_, payload, err := client.ReadMessage()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				if time.Since(lastPing) >= pingInterval {
+					if perr := client.SendSubscribePing(); perr != nil {
+						return perr
+					}
+					lastPing = time.Now()
+				}
+				continue
+			}
+			return err
+		}
+		if strings.TrimSpace(payload) == "" {
+			continue
+		}
+		if err := m.processItems(ctx, cfg, []string{payload}); err != nil {
+			return err
+		}
+	}
 }
 
 func (m *Manager) runHTTP(ctx context.Context, cfg RuntimeConfig, mode string) bool {
@@ -309,6 +440,9 @@ func (m *Manager) enrichAccountSnapshots(ctx context.Context, cfg RuntimeConfig,
 		events[i].AuthLabelSnapshot = snapshot.Label
 		events[i].AuthFileSnapshot = snapshot.FileName
 		events[i].AuthProviderSnapshot = snapshot.Provider
+		if events[i].AuthProjectIDSnapshot == "" {
+			events[i].AuthProjectIDSnapshot = snapshot.ProjectID
+		}
 		events[i].AuthSnapshotAtMS = snapshot.CapturedAtMS
 	}
 }
@@ -346,7 +480,7 @@ func valueOr(value string, fallback string) string {
 
 func collectorMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "http", "resp":
+	case "http", "resp", "subscribe":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "auto"

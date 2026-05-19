@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAccountRows,
+  buildApiKeyRows,
   buildApiKeyDisplayMap,
+  buildRangeFilteredRows,
   buildMonitoringAuthMetaMap,
   type MonitoringEventRow,
 } from './useMonitoringData';
@@ -32,6 +34,7 @@ const createMonitoringEventRow = (
   apiKeyLabel: overrides.apiKeyLabel ?? 'ak********sh',
   apiKeyMasked: overrides.apiKeyMasked ?? 'ak********sh',
   provider: overrides.provider ?? 'codex',
+  projectId: overrides.projectId ?? '',
   planType: overrides.planType ?? 'pro',
   channel: overrides.channel ?? 'codex',
   channelHost: overrides.channelHost ?? 'example.com',
@@ -66,6 +69,91 @@ describe('buildAccountRows', () => {
   });
 });
 
+describe('buildApiKeyRows', () => {
+  it('groups rows by api key and prefers alias labels in the summary row', () => {
+    const rows = buildApiKeyRows([
+      createMonitoringEventRow({
+        apiKeyHash: 'hash-1',
+        apiKeyLabel: 'sk-***-1',
+        apiKeyMasked: 'sk-***-1',
+        model: 'gpt-5',
+        totalCost: 0.25,
+      }),
+      createMonitoringEventRow({
+        id: 'row-2',
+        timestampMs: Date.parse('2026-05-09T03:12:43.000Z'),
+        apiKeyHash: 'hash-1',
+        apiKeyLabel: 'Team Alpha',
+        apiKeyMasked: 'sk-***-1',
+        model: 'gpt-4.1',
+        failed: true,
+        totalCost: 0.4,
+        inputTokens: 30,
+        outputTokens: 12,
+        cachedTokens: 5,
+        totalTokens: 47,
+      }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].apiKeyLabel).toBe('Team Alpha');
+    expect(rows[0].apiKeyMasked).toBe('sk-***-1');
+    expect(rows[0].totalCalls).toBe(2);
+    expect(rows[0].successCalls).toBe(1);
+    expect(rows[0].failureCalls).toBe(1);
+    expect(rows[0].totalCost).toBeCloseTo(0.65);
+    expect(rows[0].successRate).toBe(0.5);
+    expect(rows[0].lastSeenAt).toBe(Date.parse('2026-05-09T03:12:43.000Z'));
+    expect(rows[0].models.map((model) => model.model)).toEqual(['gpt-4.1', 'gpt-5']);
+  });
+
+  it('uses stable fallback groups for unknown client api keys', () => {
+    const rows = buildApiKeyRows([
+      createMonitoringEventRow({
+        sourceKey: 'source:alpha',
+        authIndex: 'auth-a',
+        authLabel: 'alpha',
+        apiKeyHash: '',
+        apiKeyLabel: '',
+        apiKeyMasked: '',
+      }),
+      createMonitoringEventRow({
+        id: 'row-2',
+        sourceKey: 'source:beta',
+        authIndex: 'auth-b',
+        authLabel: 'beta',
+        apiKeyHash: '',
+        apiKeyLabel: '',
+        apiKeyMasked: '',
+        model: 'gpt-5.5',
+      }),
+    ]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.isUnknown)).toBe(true);
+    expect(rows[0].authLabels.length).toBeGreaterThan(0);
+    expect(rows[0].id).not.toBe(rows[1].id);
+  });
+});
+
+describe('buildRangeFilteredRows', () => {
+  it('applies api key hash filtering even when the search query is empty', () => {
+    const rows = buildRangeFilteredRows(
+      [
+        createMonitoringEventRow({ apiKeyHash: 'hash-a' }),
+        createMonitoringEventRow({ id: 'row-2', apiKeyHash: 'hash-b' }),
+      ],
+      'all',
+      null,
+      '',
+      'hash-b'
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].apiKeyHash).toBe('hash-b');
+  });
+});
+
 describe('buildMonitoringAuthMetaMap', () => {
   it('maps legacy auth indices to current auth metadata', () => {
     const authFiles: AuthFileItem[] = [
@@ -93,5 +181,17 @@ describe('buildApiKeyDisplayMap', () => {
 
     expect(map.get(apiKeyHash)?.label).toBe('Team A');
     expect(map.get(apiKeyHash)?.masked).toMatch(/^sk/);
+  });
+
+  it('masks aliases that look like full secrets before showing them in the ui', () => {
+    const apiKey = 'sk-live-real-key';
+    const apiKeyHash = sha256Hex(apiKey);
+    const map = buildApiKeyDisplayMap(
+      [apiKey],
+      [{ apiKeyHash, alias: 'ghp_1234567890abcdef', updatedAtMs: 1 }]
+    );
+
+    expect(map.get(apiKeyHash)?.label).toContain('*');
+    expect(map.get(apiKeyHash)?.label).not.toContain('ghp_1234567890abcdef');
   });
 });

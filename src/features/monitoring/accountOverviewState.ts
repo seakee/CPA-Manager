@@ -58,6 +58,7 @@ export type AccountOverviewPageResetState = {
   customStartInput: string;
   deferredSearch: string;
   selectedAccount: string;
+  selectedApiKeyHash: string;
   selectedChannel: string;
   selectedModel: string;
   selectedProvider: string;
@@ -200,6 +201,7 @@ export const shouldResetAccountOverviewPage = (
     previous.customStartInput !== next.customStartInput ||
     previous.deferredSearch !== next.deferredSearch ||
     previous.selectedAccount !== next.selectedAccount ||
+    previous.selectedApiKeyHash !== next.selectedApiKeyHash ||
     previous.selectedChannel !== next.selectedChannel ||
     previous.selectedModel !== next.selectedModel ||
     previous.selectedProvider !== next.selectedProvider ||

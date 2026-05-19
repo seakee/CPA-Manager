@@ -186,6 +186,8 @@ export function VisualConfigEditor({
   const shouldRenderCompactSectionNav = !shouldRenderFloatingSidebar;
   const routingStrategyLabelId = useId();
   const routingStrategyHintId = `${routingStrategyLabelId}-hint`;
+  const disableImageGenerationLabelId = useId();
+  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;
   const keepaliveInputId = useId();
   const keepaliveHintId = `${keepaliveInputId}-hint`;
   const keepaliveErrorId = `${keepaliveInputId}-error`;
@@ -210,6 +212,7 @@ export function VisualConfigEditor({
 
   const portError = getValidationMessage(t, validationErrors?.port);
   const logsMaxSizeError = getValidationMessage(t, validationErrors?.logsMaxTotalSizeMb);
+  const errorLogsMaxFilesError = getValidationMessage(t, validationErrors?.errorLogsMaxFiles);
   const redisUsageQueueRetentionError = getValidationMessage(
     t,
     validationErrors?.redisUsageQueueRetentionSeconds
@@ -217,6 +220,10 @@ export function VisualConfigEditor({
   const requestRetryError = getValidationMessage(t, validationErrors?.requestRetry);
   const maxRetryCredentialsError = getValidationMessage(t, validationErrors?.maxRetryCredentials);
   const maxRetryIntervalError = getValidationMessage(t, validationErrors?.maxRetryInterval);
+  const authAutoRefreshWorkersError = getValidationMessage(
+    t,
+    validationErrors?.authAutoRefreshWorkers
+  );
   const keepaliveError = getValidationMessage(t, validationErrors?.['streaming.keepaliveSeconds']);
   const bootstrapRetriesError = getValidationMessage(
     t,
@@ -250,6 +257,23 @@ export function VisualConfigEditor({
   const handlePayloadFilterRulesChange = useCallback(
     (payloadFilterRules: PayloadFilterRule[]) => onChange({ payloadFilterRules }),
     [onChange]
+  );
+  const disableImageGenerationOptions = useMemo(
+    () => [
+      {
+        value: 'false',
+        label: t('config_management.visual.sections.network.disable_image_generation_false'),
+      },
+      {
+        value: 'true',
+        label: t('config_management.visual.sections.network.disable_image_generation_true'),
+      },
+      {
+        value: 'chat',
+        label: t('config_management.visual.sections.network.disable_image_generation_chat'),
+      },
+    ],
+    [t]
   );
 
   const countErrors = useCallback(
@@ -293,14 +317,23 @@ export function VisualConfigEditor({
         title: t('config_management.visual.sections.system.title'),
         description: t('config_management.visual.sections.system.description'),
         icon: IconDiamond,
-        errorCount: countErrors(['logsMaxTotalSizeMb', 'redisUsageQueueRetentionSeconds']),
+        errorCount: countErrors([
+          'errorLogsMaxFiles',
+          'logsMaxTotalSizeMb',
+          'redisUsageQueueRetentionSeconds',
+        ]),
       },
       {
         id: 'network',
         title: t('config_management.visual.sections.network.title'),
         description: t('config_management.visual.sections.network.description'),
         icon: IconTrendingUp,
-        errorCount: countErrors(['requestRetry', 'maxRetryCredentials', 'maxRetryInterval']),
+        errorCount: countErrors([
+          'requestRetry',
+          'maxRetryCredentials',
+          'maxRetryInterval',
+          'authAutoRefreshWorkers',
+        ]),
       },
       {
         id: 'quota',
@@ -658,6 +691,15 @@ export function VisualConfigEditor({
                 disabled={disabled}
                 onChange={(rmDisableControlPanel) => onChange({ rmDisableControlPanel })}
               />
+              <ToggleRow
+                title={t('config_management.visual.sections.remote.disable_auto_update_panel')}
+                description={t(
+                  'config_management.visual.sections.remote.disable_auto_update_panel_desc'
+                )}
+                checked={values.rmDisableAutoUpdatePanel}
+                disabled={disabled}
+                onChange={(rmDisableAutoUpdatePanel) => onChange({ rmDisableAutoUpdatePanel })}
+              />
               <SectionGrid>
                 <Input
                   label={t('config_management.visual.sections.remote.secret_key')}
@@ -747,6 +789,28 @@ export function VisualConfigEditor({
                   disabled={disabled}
                   onChange={(loggingToFile) => onChange({ loggingToFile })}
                 />
+                <ToggleRow
+                  title={t('config_management.visual.sections.system.antigravity_signature_cache')}
+                  description={t(
+                    'config_management.visual.sections.system.antigravity_signature_cache_desc'
+                  )}
+                  checked={values.antigravitySignatureCacheEnabled}
+                  disabled={disabled}
+                  onChange={(antigravitySignatureCacheEnabled) =>
+                    onChange({ antigravitySignatureCacheEnabled })
+                  }
+                />
+                <ToggleRow
+                  title={t('config_management.visual.sections.system.antigravity_signature_strict')}
+                  description={t(
+                    'config_management.visual.sections.system.antigravity_signature_strict_desc'
+                  )}
+                  checked={values.antigravitySignatureBypassStrict}
+                  disabled={disabled}
+                  onChange={(antigravitySignatureBypassStrict) =>
+                    onChange({ antigravitySignatureBypassStrict })
+                  }
+                />
               </SectionGrid>
 
               <SectionGrid>
@@ -758,6 +822,15 @@ export function VisualConfigEditor({
                   onChange={(e) => onChange({ logsMaxTotalSizeMb: e.target.value })}
                   disabled={disabled}
                   error={logsMaxSizeError}
+                />
+                <Input
+                  label={t('config_management.visual.sections.system.error_logs_max_files')}
+                  type="number"
+                  placeholder="10"
+                  value={values.errorLogsMaxFiles}
+                  onChange={(e) => onChange({ errorLogsMaxFiles: e.target.value })}
+                  disabled={disabled}
+                  error={errorLogsMaxFilesError}
                 />
                 <Input
                   label={t('config_management.visual.sections.system.redis_usage_queue_retention')}
@@ -776,6 +849,90 @@ export function VisualConfigEditor({
                   error={redisUsageQueueRetentionError}
                 />
               </SectionGrid>
+
+              <SectionSubsection
+                title={t('config_management.visual.sections.headers.claude_title')}
+                description={t('config_management.visual.sections.headers.description')}
+              >
+                <SectionStack>
+                  <SectionGrid>
+                    <Input
+                      label={t('config_management.visual.sections.headers.user_agent')}
+                      placeholder="claude-cli/2.1.44 (external, sdk-cli)"
+                      value={values.claudeHeaderUserAgent}
+                      onChange={(e) => onChange({ claudeHeaderUserAgent: e.target.value })}
+                      disabled={disabled}
+                    />
+                    <Input
+                      label={t('config_management.visual.sections.headers.package_version')}
+                      placeholder="0.74.0"
+                      value={values.claudeHeaderPackageVersion}
+                      onChange={(e) => onChange({ claudeHeaderPackageVersion: e.target.value })}
+                      disabled={disabled}
+                    />
+                    <Input
+                      label={t('config_management.visual.sections.headers.runtime_version')}
+                      placeholder="v24.3.0"
+                      value={values.claudeHeaderRuntimeVersion}
+                      onChange={(e) => onChange({ claudeHeaderRuntimeVersion: e.target.value })}
+                      disabled={disabled}
+                    />
+                    <Input
+                      label={t('config_management.visual.sections.headers.os')}
+                      placeholder="MacOS"
+                      value={values.claudeHeaderOs}
+                      onChange={(e) => onChange({ claudeHeaderOs: e.target.value })}
+                      disabled={disabled}
+                    />
+                    <Input
+                      label={t('config_management.visual.sections.headers.arch')}
+                      placeholder="arm64"
+                      value={values.claudeHeaderArch}
+                      onChange={(e) => onChange({ claudeHeaderArch: e.target.value })}
+                      disabled={disabled}
+                    />
+                    <Input
+                      label={t('config_management.visual.sections.headers.timeout')}
+                      placeholder="600"
+                      value={values.claudeHeaderTimeout}
+                      onChange={(e) => onChange({ claudeHeaderTimeout: e.target.value })}
+                      disabled={disabled}
+                    />
+                  </SectionGrid>
+                  <SectionGrid>
+                    <ToggleRow
+                      title={t('config_management.visual.sections.headers.stabilize_device')}
+                      description={t(
+                        'config_management.visual.sections.headers.stabilize_device_desc'
+                      )}
+                      checked={values.claudeHeaderStabilizeDeviceProfile}
+                      disabled={disabled}
+                      onChange={(claudeHeaderStabilizeDeviceProfile) =>
+                        onChange({ claudeHeaderStabilizeDeviceProfile })
+                      }
+                    />
+                  </SectionGrid>
+                </SectionStack>
+              </SectionSubsection>
+
+              <SectionSubsection title={t('config_management.visual.sections.headers.codex_title')}>
+                <SectionGrid>
+                  <Input
+                    label={t('config_management.visual.sections.headers.user_agent')}
+                    placeholder="codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
+                    value={values.codexHeaderUserAgent}
+                    onChange={(e) => onChange({ codexHeaderUserAgent: e.target.value })}
+                    disabled={disabled}
+                  />
+                  <Input
+                    label={t('config_management.visual.sections.headers.beta_features')}
+                    placeholder="multi_agent"
+                    value={values.codexHeaderBetaFeatures}
+                    onChange={(e) => onChange({ codexHeaderBetaFeatures: e.target.value })}
+                    disabled={disabled}
+                  />
+                </SectionGrid>
+              </SectionSubsection>
             </SectionStack>
           </ConfigSection>
 
@@ -825,6 +982,18 @@ export function VisualConfigEditor({
                   disabled={disabled}
                   error={maxRetryIntervalError}
                 />
+                <Input
+                  label={t('config_management.visual.sections.network.auth_auto_refresh_workers')}
+                  type="number"
+                  placeholder="16"
+                  value={values.authAutoRefreshWorkers}
+                  onChange={(e) => onChange({ authAutoRefreshWorkers: e.target.value })}
+                  disabled={disabled}
+                  hint={t(
+                    'config_management.visual.sections.network.auth_auto_refresh_workers_hint'
+                  )}
+                  error={authAutoRefreshWorkersError}
+                />
                 <FieldShell
                   label={t('config_management.visual.sections.network.routing_strategy')}
                   labelId={routingStrategyLabelId}
@@ -854,6 +1023,27 @@ export function VisualConfigEditor({
                     }
                   />
                 </FieldShell>
+                <FieldShell
+                  label={t('config_management.visual.sections.network.disable_image_generation')}
+                  labelId={disableImageGenerationLabelId}
+                  hint={t('config_management.visual.sections.network.disable_image_generation_hint')}
+                  hintId={disableImageGenerationHintId}
+                >
+                  <Select
+                    value={values.disableImageGeneration}
+                    options={disableImageGenerationOptions}
+                    id={`${disableImageGenerationLabelId}-select`}
+                    disabled={disabled}
+                    ariaLabelledBy={disableImageGenerationLabelId}
+                    ariaDescribedBy={disableImageGenerationHintId}
+                    onChange={(nextValue) =>
+                      onChange({
+                        disableImageGeneration:
+                          nextValue as VisualConfigValues['disableImageGeneration'],
+                      })
+                    }
+                  />
+                </FieldShell>
                 <Input
                   label={t('config_management.visual.sections.network.session_affinity_ttl')}
                   placeholder="1h"
@@ -874,6 +1064,22 @@ export function VisualConfigEditor({
                   onChange={(forceModelPrefix) => onChange({ forceModelPrefix })}
                 />
                 <ToggleRow
+                  title={t('config_management.visual.sections.network.passthrough_headers')}
+                  description={t(
+                    'config_management.visual.sections.network.passthrough_headers_desc'
+                  )}
+                  checked={values.passthroughHeaders}
+                  disabled={disabled}
+                  onChange={(passthroughHeaders) => onChange({ passthroughHeaders })}
+                />
+                <ToggleRow
+                  title={t('config_management.visual.sections.network.disable_cooling')}
+                  description={t('config_management.visual.sections.network.disable_cooling_desc')}
+                  checked={values.disableCooling}
+                  disabled={disabled}
+                  onChange={(disableCooling) => onChange({ disableCooling })}
+                />
+                <ToggleRow
                   title={t('config_management.visual.sections.network.session_affinity')}
                   checked={values.routingSessionAffinity}
                   disabled={disabled}
@@ -885,6 +1091,15 @@ export function VisualConfigEditor({
                   checked={values.wsAuth}
                   disabled={disabled}
                   onChange={(wsAuth) => onChange({ wsAuth })}
+                />
+                <ToggleRow
+                  title={t('config_management.visual.sections.network.enable_gemini_cli_endpoint')}
+                  description={t(
+                    'config_management.visual.sections.network.enable_gemini_cli_endpoint_desc'
+                  )}
+                  checked={values.enableGeminiCliEndpoint}
+                  disabled={disabled}
+                  onChange={(enableGeminiCliEndpoint) => onChange({ enableGeminiCliEndpoint })}
                 />
               </SectionGrid>
             </SectionStack>

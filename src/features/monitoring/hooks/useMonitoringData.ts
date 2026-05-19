@@ -7,7 +7,7 @@ import type { Config } from '@/types/config';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import { sha256Hex } from '@/utils/apiKeyHash';
-import { maskApiKey } from '@/utils/format';
+import { maskApiKey, maskSensitiveText } from '@/utils/format';
 import { buildLegacyAuthIndexAliases } from '../legacyAuthIndexAliases';
 import {
   calculateCost,
@@ -158,6 +158,14 @@ const buildSearchText = (...parts: Array<string | number | boolean | null | unde
 const formatApiKeyHashLabel = (apiKeyHash: string) =>
   apiKeyHash ? `sha256:${apiKeyHash.slice(0, 12)}` : '-';
 
+const UNKNOWN_API_KEY_GROUP_PREFIX = 'unknown-client-api-key';
+
+const sanitizeApiKeyDisplayText = (value: string, fallback = '') => {
+  const trimmed = readString(value);
+  if (!trimmed) return fallback;
+  return maskSensitiveText(trimmed) || fallback;
+};
+
 type ApiKeyDisplayInfo = {
   label: string;
   masked: string;
@@ -176,7 +184,7 @@ export const buildApiKeyDisplayMap = (
   });
   apiKeyAliases.forEach((entry) => {
     const hash = readString(entry.apiKeyHash).toLowerCase();
-    const alias = readString(entry.alias);
+    const alias = sanitizeApiKeyDisplayText(readString(entry.alias));
     if (!hash || !alias) return;
     const existing = map.get(hash);
     map.set(hash, {
@@ -364,6 +372,7 @@ export type MonitoringEventRow = {
   apiKeyLabel: string;
   apiKeyMasked: string;
   provider: string;
+  projectId: string;
   planType: string;
   channel: string;
   channelHost: string;
@@ -439,6 +448,31 @@ export type MonitoringAccountRow = {
   lastSeenAt: number;
   recentPattern: boolean[];
   models: MonitoringAccountModelSpendRow[];
+};
+
+export type MonitoringApiKeyModelSpendRow = MonitoringAccountModelSpendRow;
+
+export type MonitoringApiKeyRow = {
+  id: string;
+  apiKeyHash: string;
+  apiKeyLabel: string;
+  apiKeyMasked: string;
+  isUnknown: boolean;
+  authLabels: string[];
+  sourceLabels: string[];
+  channels: string[];
+  totalCalls: number;
+  successCalls: number;
+  failureCalls: number;
+  successRate: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number | null;
+  lastSeenAt: number;
+  models: MonitoringApiKeyModelSpendRow[];
 };
 
 export type MonitoringRealtimeRow = {
@@ -613,7 +647,7 @@ export const buildMonitoringAuthMetaMap = (
   return map;
 };
 
-const buildRangeFilteredRows = (
+export const buildRangeFilteredRows = (
   rows: MonitoringEventRow[],
   timeRange: MonitoringTimeRange,
   customTimeRange: MonitoringCustomTimeRange | null | undefined,
@@ -633,11 +667,11 @@ const buildRangeFilteredRows = (
       return false;
     }
 
-    if (
-      normalizedQuery &&
-      !row.searchText.includes(normalizedQuery) &&
-      !(normalizedSearchApiKeyHash && row.apiKeyHash === normalizedSearchApiKeyHash)
-    ) {
+    if (normalizedSearchApiKeyHash && row.apiKeyHash !== normalizedSearchApiKeyHash) {
+      return false;
+    }
+
+    if (normalizedQuery && !row.searchText.includes(normalizedQuery)) {
       return false;
     }
 
@@ -928,6 +962,174 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
           ),
       };
     })
+    .sort(
+      (left, right) =>
+        right.lastSeenAt - left.lastSeenAt ||
+        right.totalCalls - left.totalCalls ||
+        right.totalCost - left.totalCost
+    );
+};
+
+const shouldPreferApiKeyAlias = (label: string, masked: string) =>
+  Boolean(label) && label !== masked && !label.startsWith('sha256:');
+
+export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow[] => {
+  const grouped = new Map<
+    string,
+    {
+      id: string;
+      apiKeyHash: string;
+      apiKeyLabel: string;
+      apiKeyMasked: string;
+      isUnknown: boolean;
+      authLabels: Set<string>;
+      sourceLabels: Set<string>;
+      channels: Set<string>;
+      modelMap: Map<
+        string,
+        {
+          model: string;
+          totalCalls: number;
+          successCalls: number;
+          failureCalls: number;
+          inputTokens: number;
+          outputTokens: number;
+          cachedTokens: number;
+          totalTokens: number;
+          totalCost: number;
+          lastSeenAt: number;
+        }
+      >;
+      totalCalls: number;
+      successCalls: number;
+      failureCalls: number;
+      inputTokens: number;
+      outputTokens: number;
+      cachedTokens: number;
+      totalTokens: number;
+      totalCost: number;
+      latencySum: number;
+      latencyCount: number;
+      lastSeenAt: number;
+    }
+  >();
+
+  rows.forEach((row) => {
+    const hasKnownApiKey = Boolean(row.apiKeyHash || row.apiKeyLabel || row.apiKeyMasked);
+    const apiKeyGroupKey = hasKnownApiKey
+      ? row.apiKeyHash || row.apiKeyLabel || row.apiKeyMasked
+      : `${UNKNOWN_API_KEY_GROUP_PREFIX}:${row.sourceKey}:${row.authIndex || row.authLabel || '-'}:${row.channel || '-'}:${row.provider || '-'}`;
+    const existing = grouped.get(apiKeyGroupKey) ?? {
+      id: apiKeyGroupKey,
+      apiKeyHash: row.apiKeyHash,
+      apiKeyLabel: sanitizeApiKeyDisplayText(row.apiKeyLabel),
+      apiKeyMasked: sanitizeApiKeyDisplayText(row.apiKeyMasked),
+      isUnknown: !hasKnownApiKey,
+      authLabels: new Set<string>(),
+      sourceLabels: new Set<string>(),
+      channels: new Set<string>(),
+      modelMap: new Map(),
+      totalCalls: 0,
+      successCalls: 0,
+      failureCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      latencySum: 0,
+      latencyCount: 0,
+      lastSeenAt: 0,
+    };
+
+    if (!existing.apiKeyHash && row.apiKeyHash) {
+      existing.apiKeyHash = row.apiKeyHash;
+    }
+    if (!existing.apiKeyMasked && row.apiKeyMasked) {
+      existing.apiKeyMasked = sanitizeApiKeyDisplayText(row.apiKeyMasked);
+    }
+    if (
+      shouldPreferApiKeyAlias(row.apiKeyLabel, row.apiKeyMasked) &&
+      !shouldPreferApiKeyAlias(existing.apiKeyLabel, existing.apiKeyMasked)
+    ) {
+      existing.apiKeyLabel = sanitizeApiKeyDisplayText(row.apiKeyLabel, existing.apiKeyLabel);
+    }
+    existing.authLabels.add(row.authLabel);
+    existing.sourceLabels.add(row.sourceMasked || row.source);
+    existing.channels.add(row.channel);
+
+    existing.totalCalls += 1;
+    existing.successCalls += row.failed ? 0 : 1;
+    existing.failureCalls += row.failed ? 1 : 0;
+    existing.inputTokens += row.inputTokens;
+    existing.outputTokens += row.outputTokens;
+    existing.cachedTokens += row.cachedTokens;
+    existing.totalTokens += row.totalTokens;
+    existing.totalCost += row.totalCost;
+    existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
+
+    if (row.latencyMs !== null) {
+      existing.latencySum += row.latencyMs;
+      existing.latencyCount += 1;
+    }
+
+    const modelEntry = existing.modelMap.get(row.model) ?? {
+      model: row.model,
+      totalCalls: 0,
+      successCalls: 0,
+      failureCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      lastSeenAt: 0,
+    };
+
+    modelEntry.totalCalls += 1;
+    modelEntry.successCalls += row.failed ? 0 : 1;
+    modelEntry.failureCalls += row.failed ? 1 : 0;
+    modelEntry.inputTokens += row.inputTokens;
+    modelEntry.outputTokens += row.outputTokens;
+    modelEntry.cachedTokens += row.cachedTokens;
+    modelEntry.totalTokens += row.totalTokens;
+    modelEntry.totalCost += row.totalCost;
+    modelEntry.lastSeenAt = Math.max(modelEntry.lastSeenAt, row.timestampMs);
+    existing.modelMap.set(row.model, modelEntry);
+
+    grouped.set(apiKeyGroupKey, existing);
+  });
+
+  return Array.from(grouped.values())
+    .map((item) => ({
+      id: item.id,
+      apiKeyHash: item.apiKeyHash,
+      apiKeyLabel: item.apiKeyLabel || item.apiKeyMasked || formatApiKeyHashLabel(item.apiKeyHash),
+      apiKeyMasked: item.apiKeyMasked || item.apiKeyLabel || formatApiKeyHashLabel(item.apiKeyHash),
+      isUnknown: item.isUnknown,
+      authLabels: Array.from(item.authLabels).filter(Boolean).sort(),
+      sourceLabels: Array.from(item.sourceLabels).filter(Boolean).sort(),
+      channels: Array.from(item.channels).filter(Boolean).sort(),
+      totalCalls: item.totalCalls,
+      successCalls: item.successCalls,
+      failureCalls: item.failureCalls,
+      successRate: item.totalCalls > 0 ? item.successCalls / item.totalCalls : 1,
+      inputTokens: item.inputTokens,
+      outputTokens: item.outputTokens,
+      cachedTokens: item.cachedTokens,
+      totalTokens: item.totalTokens,
+      totalCost: item.totalCost,
+      averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
+      lastSeenAt: item.lastSeenAt,
+      models: Array.from(item.modelMap.values())
+        .map((model) => ({
+          ...model,
+          successRate: model.totalCalls > 0 ? model.successCalls / model.totalCalls : 1,
+        }))
+        .sort(
+          (left, right) => right.totalCost - left.totalCost || right.totalCalls - left.totalCalls
+        ),
+    }))
     .sort(
       (left, right) =>
         right.lastSeenAt - left.lastSeenAt ||
@@ -1450,6 +1652,9 @@ const buildEventRows = (
       const snapshotProvider = readString(
         detail.auth_provider_snapshot ?? detail.authProviderSnapshot
       );
+      const snapshotProjectID = readString(
+        detail.auth_project_id_snapshot ?? detail.authProjectIdSnapshot
+      );
       const snapshotDisplay = snapshotAccount || snapshotLabel;
       const sourceLabel = authMeta?.label || snapshotDisplay || sourceMeta.displayName || authIndex;
       const sourceMasked = maskEmailLike(sourceLabel);
@@ -1457,8 +1662,14 @@ const buildEventRows = (
       const accountMasked = maskEmailLike(account);
       const apiKeyHash = readString(detail.api_key_hash ?? detail.apiKeyHash).toLowerCase();
       const apiKeyDisplay = apiKeyDisplayMap.get(apiKeyHash);
-      const apiKeyLabel = apiKeyDisplay?.label || formatApiKeyHashLabel(apiKeyHash);
-      const apiKeyMasked = apiKeyDisplay?.masked || apiKeyLabel;
+      const apiKeyLabel = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.label || formatApiKeyHashLabel(apiKeyHash),
+        formatApiKeyHashLabel(apiKeyHash)
+      );
+      const apiKeyMasked = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.masked || apiKeyLabel,
+        apiKeyLabel
+      );
       const channelMeta =
         channelByAuthIndex.get(authIndex) ||
         (authMeta?.authIndex ? channelByAuthIndex.get(authMeta.authIndex) : undefined);
@@ -1507,6 +1718,7 @@ const buildEventRows = (
         apiKeyLabel,
         apiKeyMasked,
         provider: authMeta?.provider || snapshotProvider || sourceMeta.type || '-',
+        projectId: snapshotProjectID,
         planType: authMeta?.planType || '-',
         channel: channelLabel,
         channelHost: channelMeta?.host || '-',

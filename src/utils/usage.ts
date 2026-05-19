@@ -34,6 +34,8 @@ export interface UsageDetail {
   authFileSnapshot?: string;
   auth_provider_snapshot?: string;
   authProviderSnapshot?: string;
+  auth_project_id_snapshot?: string;
+  authProjectIdSnapshot?: string;
   auth_snapshot_at_ms?: number;
   authSnapshotAtMs?: number;
   latency_ms?: number;
@@ -277,6 +279,9 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           auth_provider_snapshot: readDetailString(
             detailRaw.auth_provider_snapshot ?? detailRaw.authProviderSnapshot
           ),
+          auth_project_id_snapshot: readDetailString(
+            detailRaw.auth_project_id_snapshot ?? detailRaw.authProjectIdSnapshot
+          ),
           auth_snapshot_at_ms: toPositiveNumber(
             detailRaw.auth_snapshot_at_ms ?? detailRaw.authSnapshotAtMs
           ),
@@ -342,6 +347,9 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           ),
           auth_provider_snapshot: readDetailString(
             detailRaw.auth_provider_snapshot ?? detailRaw.authProviderSnapshot
+          ),
+          auth_project_id_snapshot: readDetailString(
+            detailRaw.auth_project_id_snapshot ?? detailRaw.authProjectIdSnapshot
           ),
           auth_snapshot_at_ms: toPositiveNumber(
             detailRaw.auth_snapshot_at_ms ?? detailRaw.authSnapshotAtMs

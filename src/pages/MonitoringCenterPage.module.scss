@@ -1276,6 +1276,60 @@
   background: var(--monitor-surface-elevated);
 }
 
+.apiKeySummaryTable {
+  --api-key-col-key: 28%;
+  --api-key-col-total-calls: 9%;
+  --api-key-col-success-calls: 9%;
+  --api-key-col-failure-calls: 9%;
+  --api-key-col-total-tokens: 13%;
+  --api-key-col-estimated-cost: 12%;
+  --api-key-col-latest-request: 20%;
+
+  min-width: 980px;
+  overflow: hidden;
+  border: 0;
+  border-collapse: collapse;
+  border-spacing: 0;
+  border-radius: 16px;
+  background: var(--monitor-surface-elevated);
+  table-layout: fixed;
+}
+
+.apiKeySummaryTableWrapper {
+  overflow-x: auto;
+  border: 1px solid var(--monitor-line-strong);
+  border-radius: 16px;
+  background: var(--monitor-surface-elevated);
+}
+
+.apiKeySummaryTable col:nth-child(1) {
+  width: var(--api-key-col-key);
+}
+
+.apiKeySummaryTable col:nth-child(2) {
+  width: var(--api-key-col-total-calls);
+}
+
+.apiKeySummaryTable col:nth-child(3) {
+  width: var(--api-key-col-success-calls);
+}
+
+.apiKeySummaryTable col:nth-child(4) {
+  width: var(--api-key-col-failure-calls);
+}
+
+.apiKeySummaryTable col:nth-child(5) {
+  width: var(--api-key-col-total-tokens);
+}
+
+.apiKeySummaryTable col:nth-child(6) {
+  width: var(--api-key-col-estimated-cost);
+}
+
+.apiKeySummaryTable col:nth-child(7) {
+  width: var(--api-key-col-latest-request);
+}
+
 .accountOverviewTable col:nth-child(1) {
   width: var(--account-col-account);
 }
@@ -1470,6 +1524,41 @@
 
 .table.accountOverviewTable tbody .accountSummaryRow:hover td {
   background: var(--monitor-surface-hover);
+}
+
+.apiKeySummaryTable thead th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface) 88%, var(--monitor-surface-muted));
+  box-shadow: inset 0 -1px 0 var(--monitor-line);
+}
+
+.table.apiKeySummaryTable tbody td {
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 88%, transparent);
+  border-radius: 0;
+  background: var(--monitor-surface-elevated);
+  box-shadow: none;
+}
+
+.table.apiKeySummaryTable tbody td:first-child,
+.table.apiKeySummaryTable tbody td:last-child {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+.table.apiKeySummaryTable tbody tr:nth-child(even) td {
+  background: var(--monitor-surface-elevated);
+}
+
+.table.apiKeySummaryTable tbody .apiKeySummaryRow:hover td {
+  background: var(--monitor-surface-hover);
+}
+
+.table.apiKeySummaryTable tbody .apiKeySummaryRowExpanded td {
+  border-bottom-color: transparent;
 }
 
 .innerTable {
@@ -1722,6 +1811,25 @@
   box-shadow: none;
 }
 
+.table.apiKeySummaryTable tbody .apiKeyDetailRow > td {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 78%, var(--monitor-surface));
+  box-shadow: none;
+  white-space: normal;
+}
+
+.table.apiKeySummaryTable tbody .apiKeyDetailRow > td:first-child,
+.table.apiKeySummaryTable tbody .apiKeyDetailRow > td:last-child {
+  border-radius: 0;
+}
+
+.table.apiKeySummaryTable tbody .apiKeyDetailRow:hover > td {
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 78%, var(--monitor-surface));
+  box-shadow: none;
+}
+
 .expandedAccountDetails {
   display: grid;
   grid-template-columns: minmax(300px, 0.42fr) minmax(640px, 1fr);
@@ -1731,6 +1839,11 @@
   padding: 14px 16px 16px;
   border: 0;
   border-radius: 0;
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 78%, var(--monitor-surface));
+}
+
+.apiKeyExpandedDetails {
+  padding: 14px 16px 16px;
   background: color-mix(in srgb, var(--monitor-surface-elevated) 78%, var(--monitor-surface));
 }
 
@@ -1802,6 +1915,18 @@
   height: 8px;
   border-radius: 999px;
   background: currentColor;
+  flex: 0 0 auto;
+}
+
+.apiKeyIcon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
   flex: 0 0 auto;
 }
 

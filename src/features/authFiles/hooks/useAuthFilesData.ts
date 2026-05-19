@@ -17,6 +17,7 @@ import {
   hasAuthFileStatusMessage,
   isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
+  normalizeProviderKey,
 } from '@/features/authFiles/constants';
 
 type DeleteAllOptions = {
@@ -356,11 +357,12 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
         onResetDisabledOnly,
         onResetHealthyOnly,
       } = deleteAllOptions;
-      const isFiltered = filter !== 'all';
+      const normalizedFilter = normalizeProviderKey(filter);
+      const isFiltered = normalizedFilter !== 'all';
       const isProblemOnly = problemOnly === true;
       const isDisabledOnly = disabledOnly === true;
       const isHealthyOnly = healthyOnly === true;
-      const typeLabel = isFiltered ? getTypeLabel(t, filter) : t('auth_files.filter_all');
+      const typeLabel = isFiltered ? getTypeLabel(t, normalizedFilter) : t('auth_files.filter_all');
       let confirmMessage = t('auth_files.delete_all_confirm');
       if (isDisabledOnly || isHealthyOnly) {
         confirmMessage = t('auth_files.delete_filtered_result_confirm');
@@ -388,7 +390,13 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
             } else {
               const filesToDelete = files.filter((file) => {
                 if (isRuntimeOnlyAuthFile(file)) return false;
-                if (isFiltered && file.type !== filter) return false;
+                if (
+                  isFiltered &&
+                  normalizeProviderKey(String(file.type ?? file.provider ?? '')) !==
+                    normalizedFilter
+                ) {
+                  return false;
+                }
                 if (isProblemOnly && !hasAuthFileStatusMessage(file)) return false;
                 if (isDisabledOnly && file.disabled !== true) return false;
                 if (isHealthyOnly && !isHealthyAuthFile(file)) return false;

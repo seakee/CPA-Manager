@@ -14,10 +14,14 @@ import (
 )
 
 type Client struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	timeout time.Duration
+	conn       net.Conn
+	reader     *bufio.Reader
+	timeout    time.Duration
+	subscribed bool
 }
+
+// ErrUnsupportedSubscribe 表示上游不支持 SUBSCRIBE 命令（典型为 v7.0.7 之前的 CPA）。
+var ErrUnsupportedSubscribe = errors.New("RESP server does not support SUBSCRIBE")
 
 func Dial(rawURL string, skipTLSVerify bool) (*Client, error) {
 	upstream, err := parseURL(rawURL)
@@ -103,6 +107,9 @@ func (c *Client) Do(args ...string) (any, error) {
 	if c == nil || c.conn == nil {
 		return nil, errors.New("RESP client is closed")
 	}
+	if c.subscribed {
+		return nil, errors.New("RESP client is in subscribe mode")
+	}
 	if err := c.conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
 		return nil, err
 	}
@@ -110,6 +117,107 @@ func (c *Client) Do(args ...string) (any, error) {
 		return nil, err
 	}
 	return c.readValue()
+}
+
+// Subscribe 订阅指定频道。必须在 AUTH 之后调用。成功后客户端进入订阅模式，
+// 后续应通过 ReadMessage 读取消息，PING 通过 SendSubscribePing 发送。
+func (c *Client) Subscribe(channel string) error {
+	if c == nil || c.conn == nil {
+		return errors.New("RESP client is closed")
+	}
+	if c.subscribed {
+		return errors.New("RESP client is already in subscribe mode")
+	}
+	if err := c.conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
+		return err
+	}
+	if _, err := c.conn.Write(encodeCommand([]string{"SUBSCRIBE", channel})); err != nil {
+		return err
+	}
+	value, err := c.readValue()
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unknown command") ||
+			strings.Contains(strings.ToLower(err.Error()), "unsupported") {
+			return ErrUnsupportedSubscribe
+		}
+		return err
+	}
+	frame, ok := value.([]any)
+	if !ok || len(frame) < 3 {
+		return fmt.Errorf("unexpected SUBSCRIBE response: %v", value)
+	}
+	kind, _ := frame[0].(string)
+	name, _ := frame[1].(string)
+	if !strings.EqualFold(kind, "subscribe") || name != channel {
+		return fmt.Errorf("unexpected SUBSCRIBE response: %v", value)
+	}
+	c.subscribed = true
+	// 进入订阅模式后清除 deadline，超时由调用方通过 SetReadDeadline 控制。
+	return c.conn.SetDeadline(time.Time{})
+}
+
+// ReadMessage 阻塞读取一条 PUBLISH 推送的消息，自动跳过 subscribe/unsubscribe/pong 控制帧。
+// 调用方应通过 SetReadDeadline 控制读超时。
+func (c *Client) ReadMessage() (string, string, error) {
+	if c == nil || c.conn == nil {
+		return "", "", errors.New("RESP client is closed")
+	}
+	if !c.subscribed {
+		return "", "", errors.New("RESP client is not in subscribe mode")
+	}
+	for {
+		value, err := c.readValue()
+		if err != nil {
+			return "", "", err
+		}
+		switch frame := value.(type) {
+		case []any:
+			if len(frame) == 0 {
+				continue
+			}
+			kind, _ := frame[0].(string)
+			switch strings.ToLower(kind) {
+			case "message":
+				if len(frame) < 3 {
+					return "", "", fmt.Errorf("invalid message frame: %v", frame)
+				}
+				channel, _ := frame[1].(string)
+				payload, _ := frame[2].(string)
+				return channel, payload, nil
+			case "subscribe", "unsubscribe", "pong":
+				continue
+			default:
+				return "", "", fmt.Errorf("unsupported subscribe frame: %v", frame)
+			}
+		case string:
+			if strings.EqualFold(frame, "PONG") {
+				continue
+			}
+			return "", "", fmt.Errorf("unexpected RESP value: %q", frame)
+		default:
+			return "", "", fmt.Errorf("unexpected RESP frame type: %T", frame)
+		}
+	}
+}
+
+// SendSubscribePing 在订阅模式下发送 PING 用于 keepalive，响应由 ReadMessage 跳过。
+func (c *Client) SendSubscribePing() error {
+	if c == nil || c.conn == nil {
+		return errors.New("RESP client is closed")
+	}
+	if !c.subscribed {
+		return errors.New("RESP client is not in subscribe mode")
+	}
+	_, err := c.conn.Write(encodeCommand([]string{"PING"}))
+	return err
+}
+
+// SetReadDeadline 设置底层连接的读超时，主要供订阅模式使用。
+func (c *Client) SetReadDeadline(t time.Time) error {
+	if c == nil || c.conn == nil {
+		return errors.New("RESP client is closed")
+	}
+	return c.conn.SetReadDeadline(t)
 }
 
 func encodeCommand(args []string) []byte {

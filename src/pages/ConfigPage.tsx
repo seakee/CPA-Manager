@@ -171,6 +171,7 @@ export function ConfigPage() {
       { value: 'auto', label: t('config_management.manager.collector_mode_auto') },
       { value: 'http', label: t('config_management.manager.collector_mode_http') },
       { value: 'resp', label: t('config_management.manager.collector_mode_resp') },
+      { value: 'subscribe', label: t('config_management.manager.collector_mode_subscribe') },
     ],
     [t]
   );

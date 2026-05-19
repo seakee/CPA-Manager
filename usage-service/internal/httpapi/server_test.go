@@ -409,6 +409,37 @@ func TestManagerConfigRejectsPollIntervalAboveRetention(t *testing.T) {
 	}
 }
 
+func TestManagerConfigPreservesSubscribeCollectorMode(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v0/management/config" && r.Header.Get("Authorization") == "Bearer management-key" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"usage-statistics-enabled":true}`))
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	t.Cleanup(upstream.Close)
+
+	handler := newTestHandler(t, upstream.URL, true)
+	body := bytes.NewBufferString(`{"config":{"cpaConnection":{"cpaBaseUrl":"` + upstream.URL + `","managementKey":"management-key"},"collector":{"enabled":false,"collectorMode":"subscribe","queue":"usage","popSide":"right","batchSize":100,"pollIntervalMs":500,"queryLimit":50000},"externalUsageService":{"enabled":false}}}`)
+	req := httptest.NewRequest(http.MethodPut, "/usage-service/config", body)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var response managerConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Config.Collector.CollectorMode != "subscribe" {
+		t.Fatalf("collectorMode = %q, want subscribe", response.Config.Collector.CollectorMode)
+	}
+}
+
 func TestManagerConfigReadsLegacySetup(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v0/management/config" && r.Header.Get("Authorization") == "Bearer management-key" {

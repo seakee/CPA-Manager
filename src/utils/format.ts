@@ -33,7 +33,7 @@ export function maskApiKey(key: string): string {
 }
 
 const API_KEY_MASK_REGEX =
-  /(sk-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|AIza[0-9A-Za-z-_]{8,}|AI[a-zA-Z0-9_-]{6,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/g;
+  /(sk-proj-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|sk-[A-Za-z0-9-_]{6,}|sess-[A-Za-z0-9-_]{6,}|ghp_[A-Za-z0-9]{6,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z-_]{8,}|AI[a-zA-Z0-9_-]{6,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/g;
 
 /**
  * 将文本中的 API Key 片段替换为脱敏显示
@@ -64,7 +64,7 @@ export function formatFileSize(bytes: number): string {
  * 格式化日期时间
  */
 export function formatDateTime(date: string | Date, locale?: string): string {
-  const d = typeof date === 'string' ? parseTimestamp(date) ?? new Date(date) : date;
+  const d = typeof date === 'string' ? (parseTimestamp(date) ?? new Date(date)) : date;
 
   if (isNaN(d.getTime())) {
     return 'Invalid Date';
@@ -77,7 +77,7 @@ export function formatDateTime(date: string | Date, locale?: string): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
   });
 }
 

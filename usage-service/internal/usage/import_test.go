@@ -162,3 +162,44 @@ not-json`
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestParseImportPayloadPreservesAuthProjectIDSnapshot(t *testing.T) {
+	payload := `{
+	  "event_hash": "hash-project",
+	  "timestamp_ms": 1760000000000,
+	  "timestamp": "2025-10-09T08:53:20Z",
+	  "model": "gemini-2.5",
+	  "endpoint": "POST /v1/chat/completions",
+	  "auth_project_id_snapshot": "vertex-project-42",
+	  "input_tokens": 1,
+	  "total_tokens": 1
+	}`
+	result, err := ParseImportPayload([]byte(payload))
+	if err != nil {
+		t.Fatalf("parse exported event: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if got := result.Events[0].AuthProjectIDSnapshot; got != "vertex-project-42" {
+		t.Fatalf("auth_project_id_snapshot = %q", got)
+	}
+}
+
+func TestNormalizeRawReadsProjectID(t *testing.T) {
+	payload := `{
+	  "timestamp": "2026-05-19T10:00:00Z",
+	  "model": "gemini-2.5",
+	  "endpoint": "POST /v1/chat/completions",
+	  "project_id": "vertex-project-42",
+	  "input_tokens": 1,
+	  "total_tokens": 1
+	}`
+	event, err := NormalizeRaw([]byte(payload))
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if event.AuthProjectIDSnapshot != "vertex-project-42" {
+		t.Fatalf("auth_project_id_snapshot = %q", event.AuthProjectIDSnapshot)
+	}
+}
