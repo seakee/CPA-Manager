@@ -98,7 +98,7 @@ const useQuotaPagination = <T,>(items: T[], defaultPageSize = 6): QuotaPaginatio
     goToNext,
     loading,
     loadingScope,
-    setLoading
+    setLoading,
   };
 };
 
@@ -117,7 +117,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   loading,
   disabled,
   searchQuery = '',
-  sortMode = 'default'
+  sortMode = 'default',
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -131,10 +131,10 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   const [viewMode, setViewMode] = useState<ViewMode>('paged');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
 
-  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [
-    files,
-    config
-  ]);
+  const filteredFiles = useMemo(
+    () => files.filter((file) => config.filterFn(file)),
+    [files, config]
+  );
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
   const { quota, loadQuota } = useQuotaLoader(config);
@@ -154,7 +154,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         fileQuota?.status,
         fileQuota?.error,
         fileQuota?.errorStatus,
-        ...(config.getSearchText?.(file, fileQuota, t) ?? [])
+        ...(config.getSearchText?.(file, fileQuota, t) ?? []),
       ];
 
       return stringifySearchValue(searchValues).some((value) =>
@@ -180,8 +180,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         if (leftKnown || rightKnown) {
           if (!leftKnown) return 1;
           if (!rightKnown) return -1;
-          const rankDiff =
-            sortMode === 'plan-desc' ? rightRank - leftRank : leftRank - rightRank;
+          const rankDiff = sortMode === 'plan-desc' ? rightRank - leftRank : leftRank - rightRank;
           if (rankDiff !== 0) return rankDiff;
         }
 
@@ -204,7 +203,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     goToPrev,
     goToNext,
     loading: sectionLoading,
-    setLoading
+    setLoading,
   } = useQuotaPagination(displayFiles);
 
   useEffect(() => {
@@ -235,6 +234,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
 
   const pendingQuotaRefreshRef = useRef(false);
   const prevFilesLoadingRef = useRef(loading);
+  const singleRefreshInFlightRef = useRef<Set<string>>(new Set());
 
   const handleRefresh = useCallback(() => {
     pendingQuotaRefreshRef.current = true;
@@ -278,17 +278,20 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     async (file: AuthFileItem) => {
       if (disabled || file.disabled) return;
       if (quota[file.name]?.status === 'loading') return;
+      if (singleRefreshInFlightRef.current.has(file.name)) return;
+
+      singleRefreshInFlightRef.current.add(file.name);
 
       setQuota((prev) => ({
         ...prev,
-        [file.name]: config.buildLoadingState()
+        [file.name]: config.buildLoadingState(),
       }));
 
       try {
         const data = await config.fetchQuota(file, t);
         setQuota((prev) => ({
           ...prev,
-          [file.name]: config.buildSuccessState(data)
+          [file.name]: config.buildSuccessState(data),
         }));
         showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
       } catch (err: unknown) {
@@ -296,12 +299,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         const status = getStatusFromError(err);
         setQuota((prev) => ({
           ...prev,
-          [file.name]: config.buildErrorState(message, status)
+          [file.name]: config.buildErrorState(message, status),
         }));
         showNotification(
           t('auth_files.quota_refresh_failed', { name: file.name, message }),
           'error'
         );
+      } finally {
+        singleRefreshInFlightRef.current.delete(file.name);
       }
     },
     [config, disabled, quota, setQuota, showNotification, t]
@@ -400,19 +405,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
           </div>
           {displayFiles.length > pageSize && effectiveViewMode === 'paged' && (
             <div className={styles.pagination}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={goToPrev}
-                disabled={currentPage <= 1}
-              >
+              <Button variant="secondary" size="sm" onClick={goToPrev} disabled={currentPage <= 1}>
                 {t('auth_files.pagination_prev')}
               </Button>
               <div className={styles.pageInfo}>
                 {t('auth_files.pagination_info', {
                   current: currentPage,
                   total: totalPages,
-                  count: displayFiles.length
+                  count: displayFiles.length,
                 })}
               </div>
               <Button

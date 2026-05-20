@@ -1,6 +1,12 @@
 import type { AxiosRequestConfig } from 'axios';
-import type { CodexUsagePayload } from '@/types';
-import { CODEX_REQUEST_HEADERS, CODEX_USAGE_URL, parseCodexUsagePayload } from '@/utils/quota';
+import type { CodexDailyUsagePayload, CodexUsagePayload } from '@/types';
+import {
+  CODEX_DAILY_USAGE_URL,
+  CODEX_REQUEST_HEADERS,
+  CODEX_USAGE_URL,
+  parseCodexDailyUsagePayload,
+  parseCodexUsagePayload,
+} from '@/utils/quota';
 import { apiCallApi, getApiCallErrorMessage, type ApiCallResult } from './apiCall';
 
 export type CodexUsageRequestParams = {
@@ -13,6 +19,16 @@ export type CodexUsageRequestParams = {
 export type CodexUsageRawResult = {
   result: ApiCallResult;
   payload: CodexUsagePayload | null;
+};
+
+export type CodexDailyUsageRequestParams = CodexUsageRequestParams & {
+  startDate: string;
+  endDateExclusive: string;
+};
+
+export type CodexDailyUsageRawResult = {
+  result: ApiCallResult;
+  payload: CodexDailyUsagePayload | null;
 };
 
 export const buildCodexUsageRequestHeaders = (
@@ -36,6 +52,15 @@ export const buildCodexUsageRequestHeaders = (
   return headers;
 };
 
+export const buildCodexDailyUsageUrl = (startDate: string, endDateExclusive: string): string => {
+  const query = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDateExclusive,
+    group_by: 'day',
+  });
+  return `${CODEX_DAILY_USAGE_URL}?${query.toString()}`;
+};
+
 export const requestCodexUsageRaw = async ({
   authIndex,
   accountId,
@@ -55,6 +80,30 @@ export const requestCodexUsageRaw = async ({
   return {
     result,
     payload: parseCodexUsagePayload(result.body ?? result.bodyText),
+  };
+};
+
+export const requestCodexDailyUsageRaw = async ({
+  authIndex,
+  accountId,
+  userAgent,
+  requestConfig,
+  startDate,
+  endDateExclusive,
+}: CodexDailyUsageRequestParams): Promise<CodexDailyUsageRawResult> => {
+  const result = await apiCallApi.request(
+    {
+      authIndex,
+      method: 'GET',
+      url: buildCodexDailyUsageUrl(startDate, endDateExclusive),
+      header: buildCodexUsageRequestHeaders(accountId, { userAgent }),
+    },
+    requestConfig
+  );
+
+  return {
+    result,
+    payload: parseCodexDailyUsagePayload(result.body ?? result.bodyText),
   };
 };
 
