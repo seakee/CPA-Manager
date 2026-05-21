@@ -224,6 +224,8 @@ func (s *Store) ensureUsageEventSnapshotColumns() error {
 		{name: "auth_provider_snapshot", definition: "text"},
 		{name: "auth_project_id_snapshot", definition: "text"},
 		{name: "auth_snapshot_at_ms", definition: "integer"},
+		{name: "requested_model", definition: "text"},
+		{name: "resolved_model", definition: "text"},
 	}
 	for _, column := range columns {
 		if _, ok := existing[column.name]; ok {
@@ -485,7 +487,14 @@ func (s *Store) LoadAPIKeyAliases(ctx context.Context) ([]APIKeyAlias, error) {
 	return aliases, rows.Err()
 }
 
-func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias) error {
+// UpsertAPIKeyAliases 写入 / 更新 API Key 别名映射。
+//
+// activeHashes 表示当前配置中仍在使用的 API Key hash 集合：
+//   - 非空时：别名唯一性校验只在「活跃集合 ∪ items 中的 hash」内做；若冲突方
+//     是不在活跃集合中的孤儿 hash（例如删除 / 编辑密钥后的历史残留），会自动
+//     清理该孤儿映射并把别名让渡给新的 hash。
+//   - 为空 (nil) 时：保留旧行为，所有现有映射都视为活跃，遇到同名直接拒绝。
+func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias, activeHashes []string) error {
 	if len(aliases) == 0 {
 		return nil
 	}
@@ -503,6 +512,20 @@ func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias) 
 		}
 		seenAliases[aliasKey] = normalized.APIKeyHash
 		normalizedAliases = append(normalizedAliases, normalized)
+	}
+
+	var activeSet map[string]struct{}
+	if len(activeHashes) > 0 {
+		activeSet = make(map[string]struct{}, len(activeHashes)+len(normalizedAliases))
+		for _, h := range activeHashes {
+			hash := strings.ToLower(strings.TrimSpace(h))
+			if validAPIKeyHash(hash) {
+				activeSet[hash] = struct{}{}
+			}
+		}
+		for _, normalized := range normalizedAliases {
+			activeSet[normalized.APIKeyHash] = struct{}{}
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -523,6 +546,12 @@ func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias) 
 		return err
 	}
 	defer stmt.Close()
+
+	deleteStmt, err := tx.PrepareContext(ctx, `delete from api_key_aliases where api_key_hash = ?`)
+	if err != nil {
+		return err
+	}
+	defer deleteStmt.Close()
 
 	existingRows, err := tx.QueryContext(ctx, `select api_key_hash, alias from api_key_aliases`)
 	if err != nil {
@@ -548,7 +577,17 @@ func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias) 
 	for _, normalized := range normalizedAliases {
 		aliasKey := normalizeAPIKeyAliasUniqueKey(normalized.Alias)
 		if existingHash, ok := existingAliases[aliasKey]; ok && existingHash != normalized.APIKeyHash {
-			return errors.New("api key alias already exists")
+			if activeSet == nil {
+				return errors.New("api key alias already exists")
+			}
+			if _, isActive := activeSet[existingHash]; isActive {
+				return errors.New("api key alias already exists")
+			}
+			// 孤儿 hash 上的同名别名：先删除残留映射，再让渡给新 hash。
+			if _, err := deleteStmt.ExecContext(ctx, existingHash); err != nil {
+				return err
+			}
+			delete(existingAliases, aliasKey)
 		}
 		if _, err := stmt.ExecContext(
 			ctx,
@@ -558,6 +597,7 @@ func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias) 
 		); err != nil {
 			return err
 		}
+		existingAliases[aliasKey] = normalized.APIKeyHash
 	}
 	return tx.Commit()
 }
@@ -638,9 +678,10 @@ func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertR
 		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
+		requested_model, resolved_model,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
 		latency_ms, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -674,6 +715,8 @@ func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertR
 			nullString(event.AuthProviderSnapshot),
 			nullString(event.AuthProjectIDSnapshot),
 			nullPositiveInt64(event.AuthSnapshotAtMS),
+			nullString(event.RequestedModel),
+			nullString(event.ResolvedModel),
 			event.InputTokens,
 			event.OutputTokens,
 			event.ReasoningTokens,
@@ -720,6 +763,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
+		requested_model, resolved_model,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
 		latency_ms, failed, raw_json, created_at_ms
 		from usage_events
@@ -733,7 +777,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 	events := make([]usage.Event, 0)
 	for rows.Next() {
 		var event usage.Event
-		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authProjectIDSnapshot, rawJSON sql.NullString
+		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, rawJSON sql.NullString
 		var authSnapshotAt sql.NullInt64
 		var latency sql.NullInt64
 		var failed int
@@ -758,6 +802,8 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 			&authProviderSnapshot,
 			&authProjectIDSnapshot,
 			&authSnapshotAt,
+			&requestedModel,
+			&resolvedModel,
 			&event.InputTokens,
 			&event.OutputTokens,
 			&event.ReasoningTokens,
@@ -786,6 +832,8 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 		event.AuthFileSnapshot = authFileSnapshot.String
 		event.AuthProviderSnapshot = authProviderSnapshot.String
 		event.AuthProjectIDSnapshot = authProjectIDSnapshot.String
+		event.RequestedModel = requestedModel.String
+		event.ResolvedModel = resolvedModel.String
 		if authSnapshotAt.Valid {
 			event.AuthSnapshotAtMS = authSnapshotAt.Int64
 		}

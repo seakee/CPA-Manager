@@ -391,12 +391,17 @@ export const usageServiceApi = {
   saveApiKeyAliases: async (
     base: string,
     items: ApiKeyAlias[],
-    managementKey?: string
+    managementKey?: string,
+    activeApiKeyHashes?: string[]
   ): Promise<ApiKeyAliasesResponse> => {
     return withUsageServiceError(async () => {
+      const body: { items: ApiKeyAlias[]; activeApiKeyHashes?: string[] } = { items };
+      if (activeApiKeyHashes && activeApiKeyHashes.length > 0) {
+        body.activeApiKeyHashes = activeApiKeyHashes;
+      }
       const response = await axios.put<ApiKeyAliasesResponse>(
         buildUrl(base, '/v0/management/api-key-aliases'),
-        { items },
+        body,
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),

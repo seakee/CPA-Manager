@@ -23,6 +23,5 @@ COPY --from=service-build /out/cpa-manager /usr/local/bin/cpa-manager
 ENV HTTP_ADDR=0.0.0.0:18317
 ENV USAGE_DATA_DIR=/data
 ENV USAGE_DB_PATH=/data/usage.sqlite
-VOLUME ["/data"]
 EXPOSE 18317
 ENTRYPOINT ["cpa-manager"]

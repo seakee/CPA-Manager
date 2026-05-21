@@ -640,6 +640,69 @@ func TestAPIKeyAliasesSaveLoadAndDelete(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAliasesActiveHashesMigration(t *testing.T) {
+	handler := newTestHandler(t, "http://example.test", true)
+	const orphanHash = "1111111111111111111111111111111111111111111111111111111111111111"
+	const newHash = "2222222222222222222222222222222222222222222222222222222222222222"
+	const activeHash = "3333333333333333333333333333333333333333333333333333333333333333"
+
+	// 预置：orphanHash 关联 team-a（模拟编辑/删除密钥后留下的孤儿映射）。
+	seed := bytes.NewBufferString(`{"items":[{"apiKeyHash":"` + orphanHash + `","alias":"team-a"},{"apiKeyHash":"` + activeHash + `","alias":"team-b"}]}`)
+	req := httptest.NewRequest(http.MethodPut, "/v0/management/api-key-aliases", seed)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	// 编辑/重建场景：新 hash 想复用 team-a，orphanHash 不在活跃集合，应放行并清理孤儿。
+	migrate := bytes.NewBufferString(`{"items":[{"apiKeyHash":"` + newHash + `","alias":"team-a"}],"activeApiKeyHashes":["` + newHash + `","` + activeHash + `"]}`)
+	req = httptest.NewRequest(http.MethodPut, "/v0/management/api-key-aliases", migrate)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("migrate status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response struct {
+		Items []struct {
+			APIKeyHash string `json:"apiKeyHash"`
+			Alias      string `json:"alias"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	hashByAlias := map[string]string{}
+	for _, item := range response.Items {
+		hashByAlias[item.Alias] = item.APIKeyHash
+	}
+	if hashByAlias["team-a"] != newHash {
+		t.Fatalf("team-a should belong to newHash, got %#v", response.Items)
+	}
+	if hashByAlias["team-b"] != activeHash {
+		t.Fatalf("team-b should remain on activeHash, got %#v", response.Items)
+	}
+	if len(response.Items) != 2 {
+		t.Fatalf("orphan should be removed, got %#v", response.Items)
+	}
+
+	// 真冲突：被占用方仍在活跃集合，应返回 api_key_alias_duplicate。
+	conflict := bytes.NewBufferString(`{"items":[{"apiKeyHash":"` + newHash + `","alias":"team-b"}],"activeApiKeyHashes":["` + newHash + `","` + activeHash + `"]}`)
+	req = httptest.NewRequest(http.MethodPut, "/v0/management/api-key-aliases", conflict)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("active conflict status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"code":"api_key_alias_duplicate"`) {
+		t.Fatalf("active conflict body = %s", rr.Body.String())
+	}
+}
+
 func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

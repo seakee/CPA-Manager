@@ -357,6 +357,7 @@ export type MonitoringEventRow = {
   dayKey: string;
   hourLabel: string;
   model: string;
+  resolvedModel?: string;
   endpoint: string;
   endpointMethod: string;
   endpointPath: string;
@@ -1703,6 +1704,7 @@ const buildEventRows = (
         dayKey,
         hourLabel,
         model: readString(detail.__modelName) || '-',
+        resolvedModel: readString(detail.__resolvedModel) || undefined,
         endpoint,
         endpointMethod,
         endpointPath,

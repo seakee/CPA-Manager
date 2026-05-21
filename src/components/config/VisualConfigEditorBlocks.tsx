@@ -314,6 +314,15 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
 
   const getApiKeyHash = (apiKey: string) => sha256Hex(apiKey).toLowerCase();
 
+  const collectActiveApiKeyHashes = (keys: string[]): string[] => {
+    const set = new Set<string>();
+    keys.forEach((key) => {
+      const hash = getApiKeyHash(key);
+      if (hash) set.add(hash);
+    });
+    return Array.from(set);
+  };
+
   const getAliasForApiKey = (apiKey: string) => {
     const hash = getApiKeyHash(apiKey);
     return hash ? (aliasByHash.get(hash)?.alias ?? '') : '';
@@ -321,7 +330,11 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
 
   const normalizeAliasKey = (alias: string) => alias.trim().toLowerCase();
 
-  const isDuplicateAlias = (alias: string, currentApiKeyHash: string) => {
+  const isDuplicateAlias = (
+    alias: string,
+    currentApiKeyHash: string,
+    activeHashesSet?: Set<string>
+  ) => {
     const aliasKey = normalizeAliasKey(alias);
     const currentHash = currentApiKeyHash.trim().toLowerCase();
     if (!aliasKey) return false;
@@ -329,11 +342,19 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       const itemHash = String(item.apiKeyHash || '')
         .trim()
         .toLowerCase();
-      return itemHash !== currentHash && normalizeAliasKey(String(item.alias || '')) === aliasKey;
+      if (itemHash === currentHash) return false;
+      if (normalizeAliasKey(String(item.alias || '')) !== aliasKey) return false;
+      // 仅在活跃 hash 集合内做冲突判断：孤儿 hash（已被删除/编辑后残留的别名映射）不应拦截
+      if (activeHashesSet && !activeHashesSet.has(itemHash)) return false;
+      return true;
     });
   };
 
-  const validateAlias = (alias: string, currentApiKeyHash: string = '') => {
+  const validateAlias = (
+    alias: string,
+    currentApiKeyHash: string = '',
+    activeHashesSet?: Set<string>
+  ) => {
     const trimmed = alias.trim();
     if (!trimmed) {
       return t('config_management.visual.api_keys.alias_error_empty');
@@ -341,19 +362,27 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
     if (Array.from(trimmed).length > 120) {
       return t('config_management.visual.api_keys.alias_error_too_long');
     }
-    if (isDuplicateAlias(trimmed, currentApiKeyHash)) {
+    if (isDuplicateAlias(trimmed, currentApiKeyHash, activeHashesSet)) {
       return t('config_management.visual.api_keys.alias_error_duplicate');
     }
     return '';
   };
 
-  const saveAliasForKey = async (apiKey: string, alias: string) => {
+  const saveAliasForKey = async (
+    apiKey: string,
+    alias: string,
+    activeApiKeyHashes?: string[]
+  ) => {
     const apiKeyHash = getApiKeyHash(apiKey);
     const trimmedAlias = alias.trim();
     if (!apiKeyHash) {
       throw new Error(t('config_management.visual.api_keys.error_empty'));
     }
-    const validationError = validateAlias(trimmedAlias, apiKeyHash);
+    const activeHashesSet =
+      activeApiKeyHashes && activeApiKeyHashes.length > 0
+        ? new Set(activeApiKeyHashes.map((hash) => hash.toLowerCase()))
+        : undefined;
+    const validationError = validateAlias(trimmedAlias, apiKeyHash, activeHashesSet);
     if (validationError) {
       throw new Error(validationError);
     }
@@ -366,7 +395,8 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
     const response = await usageServiceApi.saveApiKeyAliases(
       serviceBase,
       [{ apiKeyHash, alias: trimmedAlias }],
-      managementKey
+      managementKey,
+      activeApiKeyHashes
     );
     setAliasesAvailable(true);
     setApiKeyAliases(Array.isArray(response.items) ? response.items : []);
@@ -459,8 +489,22 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       setFormError(t('config_management.visual.api_keys.error_invalid'));
       return;
     }
+
+    const editingIndex = editingApiKeyId
+      ? renderApiKeyIds.findIndex((id) => id === editingApiKeyId)
+      : -1;
+    const nextKeys =
+      editingApiKeyId === null
+        ? [...apiKeys, trimmed]
+        : apiKeys.map((key, idx) => (idx === editingIndex ? trimmed : key));
+    const nextActiveHashes = collectActiveApiKeyHashes(nextKeys);
+
     if (trimmedAlias) {
-      const aliasError = validateAlias(trimmedAlias, getApiKeyHash(trimmed));
+      const aliasError = validateAlias(
+        trimmedAlias,
+        getApiKeyHash(trimmed),
+        new Set(nextActiveHashes)
+      );
       if (aliasError) {
         setFormError(aliasError);
         return;
@@ -471,18 +515,10 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       }
     }
 
-    const editingIndex = editingApiKeyId
-      ? renderApiKeyIds.findIndex((id) => id === editingApiKeyId)
-      : -1;
-    const nextKeys =
-      editingApiKeyId === null
-        ? [...apiKeys, trimmed]
-        : apiKeys.map((key, idx) => (idx === editingIndex ? trimmed : key));
-
     if (trimmedAlias) {
       try {
         setAliasSaving(true);
-        await saveAliasForKey(trimmed, trimmedAlias);
+        await saveAliasForKey(trimmed, trimmedAlias, nextActiveHashes);
         showNotification(t('config_management.visual.api_keys.alias_saved'), 'success');
       } catch (error) {
         setFormError(getAliasErrorMessage(error));
@@ -504,7 +540,12 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       ? renderApiKeyIds.findIndex((id) => id === aliasEditingApiKeyId)
       : -1;
     const editingKey = apiKeys[editingIndex] ?? '';
-    const aliasError = validateAlias(aliasInputValue, getApiKeyHash(editingKey));
+    const currentActiveHashes = collectActiveApiKeyHashes(apiKeys);
+    const aliasError = validateAlias(
+      aliasInputValue,
+      getApiKeyHash(editingKey),
+      new Set(currentActiveHashes)
+    );
     if (aliasError) {
       setAliasFormError(aliasError);
       return;
@@ -512,7 +553,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
 
     setAliasSaving(true);
     try {
-      await saveAliasForKey(editingKey, aliasInputValue);
+      await saveAliasForKey(editingKey, aliasInputValue, currentActiveHashes);
       showNotification(t('config_management.visual.api_keys.alias_saved'), 'success');
       closeAliasModal();
     } catch (error) {

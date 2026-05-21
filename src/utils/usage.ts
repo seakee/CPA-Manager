@@ -42,6 +42,7 @@ export interface UsageDetail {
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
+  __resolvedModel?: string;
   __timestampMs?: number;
 }
 
@@ -289,6 +290,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
           __modelName: modelName,
+          __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
         });
       });
@@ -358,6 +360,7 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
           __modelName: modelName,
+          __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __endpoint: endpoint,
           __endpointMethod: endpointMethod,
           __endpointPath: endpointPath,
@@ -389,11 +392,13 @@ export function extractTotalTokens(detail: unknown): number {
 }
 
 export function calculateCost(
-  detail: Pick<UsageDetail, 'tokens' | '__modelName'>,
+  detail: Pick<UsageDetail, 'tokens' | '__modelName' | '__resolvedModel'>,
   modelPrices: Record<string, ModelPrice>
 ): number {
-  const modelName = detail.__modelName || '';
-  const price = modelPrices[modelName];
+  // Price preference: resolved upstream model (what the provider actually billed) → requested alias as fallback.
+  const resolvedModel = detail.__resolvedModel || '';
+  const requestedModel = detail.__modelName || '';
+  const price = modelPrices[resolvedModel] || modelPrices[requestedModel];
   if (!price) return 0;
 
   const inputTokens = Math.max(toFiniteNumber(detail.tokens.input_tokens), 0);

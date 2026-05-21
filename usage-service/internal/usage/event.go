@@ -18,6 +18,8 @@ type Event struct {
 	Timestamp             string `json:"timestamp"`
 	Provider              string `json:"provider,omitempty"`
 	Model                 string `json:"model"`
+	RequestedModel        string `json:"requested_model,omitempty"`
+	ResolvedModel         string `json:"resolved_model,omitempty"`
 	Endpoint              string `json:"endpoint,omitempty"`
 	Method                string `json:"method,omitempty"`
 	Path                  string `json:"path,omitempty"`
@@ -65,6 +67,7 @@ type Detail struct {
 	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
 	AuthSnapshotAtMS      int64  `json:"auth_snapshot_at_ms,omitempty"`
 	LatencyMS             *int64 `json:"latency_ms,omitempty"`
+	ResolvedModel         string `json:"resolved_model,omitempty"`
 	Tokens                Tokens `json:"tokens"`
 	Failed                bool   `json:"failed"`
 }
@@ -133,12 +136,21 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	apiKey := readString(record, "api_key", "apiKey", "key")
 	authIndex := readString(record, "auth_index", "authIndex", "AuthIndex")
 
+	requestedModel := readString(record, "alias", "requested_model", "requestedModel")
+	resolvedModel := readString(record, "model", "model_name", "modelName", "resolved_model", "resolvedModel")
+	model := requestedModel
+	if model == "" {
+		model = resolvedModel
+	}
+
 	event := Event{
 		RequestID:             readString(record, "request_id", "requestId", "id"),
 		TimestampMS:           timestampMS,
 		Timestamp:             timestamp,
 		Provider:              readString(record, "provider", "type", "auth_type", "authType"),
-		Model:                 readString(record, "model", "model_name", "modelName"),
+		Model:                 model,
+		RequestedModel:        requestedModel,
+		ResolvedModel:         resolvedModel,
 		Endpoint:              endpoint,
 		Method:                method,
 		Path:                  path,
@@ -212,6 +224,7 @@ func BuildPayload(events []Event) Payload {
 			AuthProjectIDSnapshot: event.AuthProjectIDSnapshot,
 			AuthSnapshotAtMS:      event.AuthSnapshotAtMS,
 			LatencyMS:             event.LatencyMS,
+			ResolvedModel:         event.ResolvedModel,
 			Failed:                event.Failed,
 			Tokens: Tokens{
 				InputTokens:     event.InputTokens,

@@ -83,7 +83,8 @@ type modelPricesSyncRequest struct {
 }
 
 type apiKeyAliasesRequest struct {
-	Items []store.APIKeyAlias `json:"items"`
+	Items              []store.APIKeyAlias `json:"items"`
+	ActiveAPIKeyHashes []string            `json:"activeApiKeyHashes,omitempty"`
 }
 
 func New(cfg config.Config, store *store.Store, collector *collector.Manager) *Server {
@@ -504,7 +505,7 @@ func (s *Server) handleAPIKeyAliases(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, errors.New("api key aliases are required"))
 			return
 		}
-		if err := s.store.UpsertAPIKeyAliases(r.Context(), req.Items); err != nil {
+		if err := s.store.UpsertAPIKeyAliases(r.Context(), req.Items, req.ActiveAPIKeyHashes); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}

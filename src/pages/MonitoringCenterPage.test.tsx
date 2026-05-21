@@ -48,16 +48,17 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'usage_stats.model_price_model': 'Model',
     'monitoring.last_sync': 'Last sync',
     'monitoring.account_quota_reset_at': 'Reset',
+    'monitoring.account_quota_title': 'Account Quota',
+    'monitoring.account_quota_loading': 'Loading quotas',
+    'monitoring.account_quota_empty': 'No quota data',
+    'monitoring.account_quota_idle': 'Click refresh quota',
+    'monitoring.account_quota_load_failed': 'Failed to load quota: {{message}}',
+    'monitoring.account_quota_refresh': 'Refresh',
+    'monitoring.account_quota_retry': 'Retry',
     'monitoring.filter_provider': 'Provider',
     'monitoring.column_host': 'Host',
     'monitoring.source': 'Source',
     'status_bar.no_requests': 'No requests',
-    'codex_quota.title': 'Codex Quota',
-    'codex_quota.refresh_button': 'Refresh',
-    'codex_quota.retry_button': 'Retry',
-    'codex_quota.empty_windows': 'No quota data',
-    'codex_quota.idle': 'Click refresh quota',
-    'codex_quota.load_failed': 'Failed to load quota: {{message}}',
   };
   let value = copy[key] ?? key;
   Object.entries(options ?? {}).forEach(([name, replacement]) => {
