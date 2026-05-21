@@ -107,6 +107,7 @@ import {
 import { downloadBlob } from '@/utils/download';
 import { sha256Hex } from '@/utils/apiKeyHash';
 import styles from './MonitoringCenterPage.module.scss';
+import { useLocalStorage } from '@/hooks';
 
 const TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
   { value: 'today', labelKey: 'monitoring.range_today' },
@@ -1827,7 +1828,7 @@ export function MonitoringCenterPage() {
   const [customDraftStartInput, setCustomDraftStartInput] = useState(getTodayStartInputValue);
   const [customDraftEndInput, setCustomDraftEndInput] = useState(getCurrentInputValue);
   const [searchInput, setSearchInput] = useState('');
-  const [autoRefreshMs, setAutoRefreshMs] = useState('5000');
+  const [autoRefreshMs, setAutoRefreshMs] = useLocalStorage("monitoringCenterPage.autoRefreshMs", '5000');
   const [selectedAccount, setSelectedAccount] = useState('all');
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
