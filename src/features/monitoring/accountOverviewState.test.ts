@@ -99,6 +99,21 @@ describe('accountOverviewState', () => {
       mode: 'card',
       sort: { key: 'totalCost', direction: 'asc' },
       cardPagination: { page: 3, pageSize: 18 },
+      timeRange: 'today',
+      filters: {
+        account: 'all',
+        provider: 'all',
+        model: 'all',
+        channel: 'all',
+        apiKeyHash: 'all',
+        status: 'all',
+      },
+      autoRefreshMs: '5000',
+      pageSizes: {
+        tableAccount: 12,
+        apiKey: 12,
+        realtime: 10,
+      },
     });
 
     expect(
@@ -111,6 +126,21 @@ describe('accountOverviewState', () => {
       mode: 'table',
       sort: DEFAULT_ACCOUNT_SORT,
       cardPagination: { page: 1, pageSize: 12 },
+      timeRange: 'today',
+      filters: {
+        account: 'all',
+        provider: 'all',
+        model: 'all',
+        channel: 'all',
+        apiKeyHash: 'all',
+        status: 'all',
+      },
+      autoRefreshMs: '5000',
+      pageSizes: {
+        tableAccount: 12,
+        apiKey: 12,
+        realtime: 10,
+      },
     });
   });
 

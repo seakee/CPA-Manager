@@ -122,6 +122,7 @@ export interface ModelPriceSyncResponse extends ModelPricesResponse {
   source?: string;
   imported: number;
   skipped: number;
+  unmatched?: string[];
 }
 
 export interface ApiKeyAlias {

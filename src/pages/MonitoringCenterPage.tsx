@@ -59,6 +59,7 @@ import {
 import {
   ACCOUNT_OVERVIEW_CARD_PAGE_SIZE_OPTIONS,
   ACCOUNT_OVERVIEW_TABLE_PAGE_SIZE_OPTIONS,
+  MONITORING_REALTIME_PAGE_SIZE_OPTIONS,
   buildEmptyMonitoringStatusData,
   buildMonitoringAccountAuthStateMap,
   buildMonitoringAccountStatusDataMap,
@@ -69,11 +70,16 @@ import {
   sortAccountRows,
   readAccountOverviewUiState,
   writeAccountOverviewUiState,
+  readMonitoringTransientUiState,
+  writeMonitoringTransientUiState,
+  normalizeMonitoringAutoRefreshMs,
   type AccountOverviewPageResetState,
   type AccountSortKey,
   type MonitoringAccountAuthState,
   type AccountSortState,
   type MonitoringAccountOverviewMode,
+  type MonitoringAutoRefreshValue,
+  type MonitoringStatusFilter,
 } from '@/features/monitoring/accountOverviewState';
 import { sortAccountOverviewCardMetrics } from '@/features/monitoring/accountOverviewCardMetrics';
 import { buildMonitoringAccountQuotaTargetsByAccount } from '@/features/monitoring/accountOverviewQuotaTargets';
@@ -126,9 +132,7 @@ const AUTO_REFRESH_OPTIONS = [
   { value: '300000', labelKey: 'monitoring.auto_refresh_5m' },
 ];
 
-const REALTIME_PAGE_SIZE_OPTIONS = [10, 50, 100, 150, 300] as const;
-const DEFAULT_ACCOUNT_PAGE_SIZE = ACCOUNT_OVERVIEW_TABLE_PAGE_SIZE_OPTIONS[0];
-const DEFAULT_REALTIME_PAGE_SIZE = 10;
+const REALTIME_PAGE_SIZE_OPTIONS = MONITORING_REALTIME_PAGE_SIZE_OPTIONS;
 const MAX_USAGE_IMPORT_FILE_SIZE = 64 * 1024 * 1024;
 const EMPTY_STATUS_BAR_DATA: StatusBarData = {
   blocks: [],
@@ -157,7 +161,7 @@ const parseDateTimeLocalValue = (value: string) => {
   return Number.isFinite(timestamp) ? timestamp : null;
 };
 
-type StatusFilter = 'all' | 'success' | 'failed';
+type StatusFilter = MonitoringStatusFilter;
 
 type SummaryCardProps = {
   label: string;
@@ -1821,19 +1825,43 @@ export function MonitoringCenterPage() {
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const requestMonitoringAvailability = useRequestMonitoringAvailability();
-  const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
-  const [customStartInput, setCustomStartInput] = useState(getTodayStartInputValue);
-  const [customEndInput, setCustomEndInput] = useState(getCurrentInputValue);
+  const initialAccountOverviewUiState = useRef(readAccountOverviewUiState());
+  const initialMonitoringTransientState = useRef(readMonitoringTransientUiState());
+  const [timeRange, setTimeRange] = useState<MonitoringTimeRange>(
+    initialAccountOverviewUiState.current.timeRange
+  );
+  const [customStartInput, setCustomStartInput] = useState(
+    () => initialMonitoringTransientState.current.customStartInput || getTodayStartInputValue()
+  );
+  const [customEndInput, setCustomEndInput] = useState(
+    () => initialMonitoringTransientState.current.customEndInput || getCurrentInputValue()
+  );
   const [customDraftStartInput, setCustomDraftStartInput] = useState(getTodayStartInputValue);
   const [customDraftEndInput, setCustomDraftEndInput] = useState(getCurrentInputValue);
-  const [searchInput, setSearchInput] = useState('');
-  const [autoRefreshMs, setAutoRefreshMs] = useState('5000');
-  const [selectedAccount, setSelectedAccount] = useState('all');
-  const [selectedProvider, setSelectedProvider] = useState('all');
-  const [selectedModel, setSelectedModel] = useState('all');
-  const [selectedChannel, setSelectedChannel] = useState('all');
-  const [selectedApiKeyHash, setSelectedApiKeyHash] = useState('all');
-  const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
+  const [searchInput, setSearchInput] = useState(
+    initialMonitoringTransientState.current.searchInput
+  );
+  const [autoRefreshMs, setAutoRefreshMs] = useState<MonitoringAutoRefreshValue>(
+    initialAccountOverviewUiState.current.autoRefreshMs
+  );
+  const [selectedAccount, setSelectedAccount] = useState(
+    initialAccountOverviewUiState.current.filters.account
+  );
+  const [selectedProvider, setSelectedProvider] = useState(
+    initialAccountOverviewUiState.current.filters.provider
+  );
+  const [selectedModel, setSelectedModel] = useState(
+    initialAccountOverviewUiState.current.filters.model
+  );
+  const [selectedChannel, setSelectedChannel] = useState(
+    initialAccountOverviewUiState.current.filters.channel
+  );
+  const [selectedApiKeyHash, setSelectedApiKeyHash] = useState(
+    initialAccountOverviewUiState.current.filters.apiKeyHash
+  );
+  const [selectedStatus, setSelectedStatus] = useState<StatusFilter>(
+    initialAccountOverviewUiState.current.filters.status
+  );
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [expandedApiKeys, setExpandedApiKeys] = useState<Record<string, boolean>>({});
   const [focusedAccount, setFocusedAccount] = useState<string | null>(null);
@@ -1847,7 +1875,6 @@ export function MonitoringCenterPage() {
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
   );
-  const initialAccountOverviewUiState = useRef(readAccountOverviewUiState());
   const [accountOverviewMode, setAccountOverviewMode] = useState<MonitoringAccountOverviewMode>(
     initialAccountOverviewUiState.current.mode
   );
@@ -1859,14 +1886,18 @@ export function MonitoringCenterPage() {
     card: initialAccountOverviewUiState.current.cardPagination.page,
   }));
   const [accountPageSizeByMode, setAccountPageSizeByMode] = useState(() => ({
-    table: DEFAULT_ACCOUNT_PAGE_SIZE,
+    table: initialAccountOverviewUiState.current.pageSizes.tableAccount,
     card: initialAccountOverviewUiState.current.cardPagination.pageSize,
   }));
   const [accountStatusUpdating, setAccountStatusUpdating] = useState<Record<string, boolean>>({});
   const [apiKeyPage, setApiKeyPage] = useState(1);
-  const [apiKeyPageSize, setApiKeyPageSize] = useState<number>(DEFAULT_ACCOUNT_PAGE_SIZE);
+  const [apiKeyPageSize, setApiKeyPageSize] = useState<number>(
+    initialAccountOverviewUiState.current.pageSizes.apiKey
+  );
   const [realtimePage, setRealtimePage] = useState(1);
-  const [realtimePageSize, setRealtimePageSize] = useState(DEFAULT_REALTIME_PAGE_SIZE);
+  const [realtimePageSize, setRealtimePageSize] = useState(
+    initialAccountOverviewUiState.current.pageSizes.realtime
+  );
   const focusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const previousAccountPageResetStateRef = useRef<AccountOverviewPageResetState | null>(null);
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
@@ -2015,8 +2046,47 @@ export function MonitoringCenterPage() {
         page: accountPageByMode.card,
         pageSize: accountPageSizeByMode.card,
       },
+      timeRange,
+      filters: {
+        account: selectedAccount,
+        provider: selectedProvider,
+        model: selectedModel,
+        channel: selectedChannel,
+        apiKeyHash: selectedApiKeyHash,
+        status: selectedStatus,
+      },
+      autoRefreshMs,
+      pageSizes: {
+        tableAccount: accountPageSizeByMode.table,
+        apiKey: apiKeyPageSize,
+        realtime: realtimePageSize,
+      },
     });
-  }, [accountOverviewMode, accountPageByMode.card, accountPageSizeByMode.card, accountSort]);
+  }, [
+    accountOverviewMode,
+    accountPageByMode.card,
+    accountPageSizeByMode.card,
+    accountPageSizeByMode.table,
+    accountSort,
+    apiKeyPageSize,
+    autoRefreshMs,
+    realtimePageSize,
+    selectedAccount,
+    selectedApiKeyHash,
+    selectedChannel,
+    selectedModel,
+    selectedProvider,
+    selectedStatus,
+    timeRange,
+  ]);
+
+  useEffect(() => {
+    writeMonitoringTransientUiState({
+      searchInput,
+      customStartInput,
+      customEndInput,
+    });
+  }, [customEndInput, customStartInput, searchInput]);
 
   const providerOptions = useMemo(
     () => [
@@ -2806,13 +2876,21 @@ export function MonitoringCenterPage() {
     setSyncingPrices(true);
     try {
       const result = await syncModelPrices(syncPriceModels);
-      showNotification(
-        t('usage_stats.model_price_sync_success', {
-          count: result.imported,
-          source: result.source || 'LiteLLM',
-        }),
-        'success'
-      );
+      const unmatchedCount = result.unmatched?.length ?? 0;
+      const baseMessage = t('usage_stats.model_price_sync_success', {
+        count: result.imported,
+        source: result.source || 'LiteLLM',
+      });
+      if (unmatchedCount > 0) {
+        showNotification(
+          `${baseMessage}${t('usage_stats.model_price_sync_unmatched_suffix', {
+            count: unmatchedCount,
+          })}`,
+          'warning'
+        );
+      } else {
+        showNotification(baseMessage, 'success');
+      }
     } catch (error: unknown) {
       const rawMessage =
         error instanceof Error ? error.message : String(error || t('common.unknown_error'));
@@ -3073,7 +3151,7 @@ export function MonitoringCenterPage() {
                   value: option.value,
                   label: t(option.labelKey),
                 }))}
-                onChange={setAutoRefreshMs}
+                onChange={(value) => setAutoRefreshMs(normalizeMonitoringAutoRefreshMs(value))}
                 ariaLabel={t('monitoring.auto_refresh')}
                 fullWidth={false}
               />

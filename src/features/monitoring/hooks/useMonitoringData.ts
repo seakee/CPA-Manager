@@ -10,11 +10,13 @@ import { sha256Hex } from '@/utils/apiKeyHash';
 import { maskApiKey, maskSensitiveText } from '@/utils/format';
 import { buildLegacyAuthIndexAliases } from '../legacyAuthIndexAliases';
 import {
+  buildModelPriceIndex,
   calculateCost,
   collectUsageDetailsWithEndpoint,
   extractTotalTokens,
   normalizeAuthIndex,
   type ModelPrice,
+  type ModelPriceIndex,
   type UsageDetailWithEndpoint,
 } from '@/utils/usage';
 
@@ -1622,7 +1624,7 @@ const buildEventRows = (
   authFileMap: Map<string, CredentialInfo>,
   sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
   channelByAuthIndex: Map<string, MonitoringChannelMeta>,
-  modelPrices: Record<string, ModelPrice>,
+  modelPriceIndex: ModelPriceIndex,
   apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>
 ) =>
   details
@@ -1690,7 +1692,7 @@ const buildEventRows = (
         Number(detail.tokens?.total_tokens) || 0,
         extractTotalTokens(detail)
       );
-      const totalCost = calculateCost(detail, modelPrices);
+      const totalCost = calculateCost(detail, modelPriceIndex);
       const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
       const dayKey = buildLocalDayKey(timestampMs);
       const hourLabel = buildHourLabel(timestampMs);
@@ -1901,6 +1903,8 @@ export function useMonitoringData({
     return buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []);
   }, [apiKeyAliases, config?.apiKeys]);
 
+  const modelPriceIndex = useMemo(() => buildModelPriceIndex(modelPrices), [modelPrices]);
+
   const allRows = useMemo(() => {
     const details = collectUsageDetailsWithEndpoint(usage);
     return buildEventRows(
@@ -1909,7 +1913,7 @@ export function useMonitoringData({
       authFileMap,
       sourceInfoMap,
       channelByAuthIndex,
-      modelPrices,
+      modelPriceIndex,
       apiKeyDisplayMap
     ).sort((left, right) => right.timestampMs - left.timestampMs);
   }, [
@@ -1917,7 +1921,7 @@ export function useMonitoringData({
     authFileMap,
     authMetaMap,
     channelByAuthIndex,
-    modelPrices,
+    modelPriceIndex,
     sourceInfoMap,
     usage,
   ]);

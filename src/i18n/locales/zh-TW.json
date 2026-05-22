@@ -1105,6 +1105,7 @@
     "model_price_saved": "模型定價已儲存",
     "model_price_sync": "一鍵同步定價",
     "model_price_sync_success": "已從 {{source}} 同步 {{count}} 筆模型定價",
+    "model_price_sync_unmatched_suffix": "，{{count}} 個模型未匹配到價格，可手動編輯補充",
     "model_price_sync_failed": "模型定價同步失敗",
     "model_price_sync_no_models": "目前沒有可同步的模型",
     "model_price_sync_requires_usage_service": "定價同步需要連接 Usage Service，請從 Docker 面板存取或在「設定面板 -> CPA-Manager 設定」中設定 Usage Service 位址。",

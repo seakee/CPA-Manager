@@ -59,12 +59,14 @@ import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth'
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import {
+  isAuthFilesViewMode,
   normalizeAuthFilesSortMode,
   readAuthFilesUiState,
   readPersistedAuthFilesCompactMode,
   writeAuthFilesUiState,
   writePersistedAuthFilesCompactMode,
   type AuthFilesSortMode,
+  type AuthFilesViewMode,
 } from '@/features/authFiles/uiState';
 import type { AuthJsonInputType } from '@/features/authFiles/sessionAuthConverter';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
@@ -236,7 +238,7 @@ export function AuthFilesPage() {
     compact: DEFAULT_COMPACT_PAGE_SIZE,
   });
   const [pageSizeInput, setPageSizeInput] = useState('9');
-  const [viewMode, setViewMode] = useState<'diagram' | 'list'>('list');
+  const [viewMode, setViewMode] = useState<AuthFilesViewMode>('list');
   const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');
   const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
   const [uiStateHydrated, setUiStateHydrated] = useState(false);
@@ -375,6 +377,9 @@ export function AuthFilesPage() {
       if (persistedSortMode) {
         setSortMode(persistedSortMode);
       }
+      if (isAuthFilesViewMode(persisted.viewMode)) {
+        setViewMode(persisted.viewMode);
+      }
     }
 
     setUiStateHydrated(true);
@@ -395,6 +400,7 @@ export function AuthFilesPage() {
       regularPageSize: pageSizeByMode.regular,
       compactPageSize: pageSizeByMode.compact,
       sortMode,
+      viewMode,
     });
     writePersistedAuthFilesCompactMode(compactMode);
   }, [
@@ -409,6 +415,7 @@ export function AuthFilesPage() {
     search,
     sortMode,
     uiStateHydrated,
+    viewMode,
   ]);
 
   useEffect(() => {

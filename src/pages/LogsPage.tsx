@@ -70,7 +70,7 @@ export function LogsPage() {
   const config = useConfigStore((state) => state.config);
   const requestLogEnabled = config?.requestLog ?? false;
 
-  const [activeTab, setActiveTab] = useState<TabType>('logs');
+  const [activeTab, setActiveTab] = useLocalStorage<TabType>('logsPage.activeTab', 'logs');
   const [logState, setLogState] = useState<LogState>({ buffer: [], visibleFrom: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

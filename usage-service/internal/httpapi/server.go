@@ -1,19 +1,23 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seakee/cpa-manager/usage-service/internal/collector"
@@ -453,12 +457,13 @@ func (s *Server) handleModelPrices(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		remotePrices, skipped, err := fetchLiteLLMModelPrices(r.Context())
+		proxyURL := s.resolveCPAProxyURL(r.Context())
+		remotePrices, skipped, err := fetchLiteLLMModelPrices(r.Context(), proxyURL)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		selectedPrices := selectModelPrices(remotePrices, req.Models)
+		selectedPrices, unmatched := selectModelPrices(remotePrices, req.Models)
 		result, err := s.store.UpsertSyncedModelPrices(r.Context(), selectedPrices)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -470,10 +475,11 @@ func (s *Server) handleModelPrices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"source":   modelPriceSyncSource,
-			"imported": result.Imported,
-			"skipped":  result.Skipped + skipped,
-			"prices":   prices,
+			"source":    modelPriceSyncSource,
+			"imported":  result.Imported,
+			"skipped":   result.Skipped + skipped,
+			"unmatched": unmatched,
+			"prices":    prices,
 		})
 	default:
 		methodNotAllowed(w)
@@ -527,12 +533,40 @@ func (s *Server) handleAPIKeyAliases(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchLiteLLMModelPrices(ctx context.Context) (map[string]store.ModelPrice, int, error) {
+// resolveCPAProxyURL 解析 CPA 全局代理 URL；任何步骤失败都返回空字符串，
+// 让上游同步流程退化为直连。
+func (s *Server) resolveCPAProxyURL(ctx context.Context) string {
+	setup, ok, err := s.resolveSetup(ctx)
+	if err != nil || !ok {
+		return ""
+	}
+	if strings.TrimSpace(setup.CPAUpstreamURL) == "" {
+		return ""
+	}
+	value, err := fetchCPAProxyURL(ctx, setup.CPAUpstreamURL, setup.ManagementKey)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func fetchLiteLLMModelPrices(ctx context.Context, proxyURL string) (map[string]store.ModelPrice, int, error) {
+	if strings.TrimSpace(proxyURL) != "" {
+		prices, skipped, err := doFetchLiteLLMModelPrices(ctx, proxyURL)
+		if err == nil {
+			return prices, skipped, nil
+		}
+		// 代理失败时回退直连，避免代理临时不可用阻塞同步。
+	}
+	return doFetchLiteLLMModelPrices(ctx, "")
+}
+
+func doFetchLiteLLMModelPrices(ctx context.Context, proxyURL string) (map[string]store.ModelPrice, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelPriceSyncURL, nil)
 	if err != nil {
 		return nil, 0, err
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newHTTPClientWithProxy(proxyURL, 30*time.Second)
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -592,7 +626,125 @@ func fetchLiteLLMModelPrices(ctx context.Context) (map[string]store.ModelPrice, 
 	return prices, skipped, nil
 }
 
-func selectModelPrices(prices map[string]store.ModelPrice, models []string) map[string]store.ModelPrice {
+func newHTTPClientWithProxy(proxyURL string, timeout time.Duration) *http.Client {
+	client := &http.Client{Timeout: timeout}
+	trimmed := strings.TrimSpace(proxyURL)
+	if trimmed == "" {
+		return client
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return client
+	}
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return client
+	}
+	transport := base.Clone()
+	transport.Proxy = http.ProxyURL(parsed)
+	client.Transport = transport
+	return client
+}
+
+type proxyCacheEntry struct {
+	value     string
+	expiresAt time.Time
+}
+
+const cpaProxyCacheTTL = 5 * time.Minute
+
+var (
+	cpaProxyCacheMu sync.RWMutex
+	cpaProxyCache   = map[string]proxyCacheEntry{}
+)
+
+// fetchCPAProxyURL 从 CPA 上游读取全局代理 URL（GET /v0/management/proxy-url），
+// 结果在 cpaProxyCacheTTL 内复用以避免频繁打到 CPA。空字符串表示未配置代理。
+func fetchCPAProxyURL(ctx context.Context, baseURL string, managementKey string) (string, error) {
+	base := normalizeBaseURL(baseURL)
+	if base == "" {
+		return "", nil
+	}
+	if value, ok := lookupCPAProxyCache(base); ok {
+		return value, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v0/management/proxy-url", nil)
+	if err != nil {
+		return "", err
+	}
+	if managementKey != "" {
+		req.Header.Set("Authorization", "Bearer "+managementKey)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		storeCPAProxyCache(base, "")
+		return "", nil
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "", errors.New("fetch CPA proxy-url failed: " + res.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	value := extractProxyURLFromBody(body)
+	storeCPAProxyCache(base, value)
+	return value, nil
+}
+
+func extractProxyURLFromBody(body []byte) string {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ""
+	}
+	if body[0] == '"' {
+		var s string
+		if err := json.Unmarshal(body, &s); err == nil {
+			return strings.TrimSpace(s)
+		}
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err == nil {
+		for _, key := range []string{"proxy-url", "proxyUrl", "proxy_url", "value"} {
+			raw, ok := obj[key]
+			if !ok {
+				continue
+			}
+			if str, ok := raw.(string); ok {
+				return strings.TrimSpace(str)
+			}
+		}
+	}
+	return ""
+}
+
+func lookupCPAProxyCache(base string) (string, bool) {
+	cpaProxyCacheMu.RLock()
+	entry, ok := cpaProxyCache[base]
+	cpaProxyCacheMu.RUnlock()
+	if !ok || time.Now().After(entry.expiresAt) {
+		return "", false
+	}
+	return entry.value, true
+}
+
+func storeCPAProxyCache(base string, value string) {
+	cpaProxyCacheMu.Lock()
+	cpaProxyCache[base] = proxyCacheEntry{value: value, expiresAt: time.Now().Add(cpaProxyCacheTTL)}
+	cpaProxyCacheMu.Unlock()
+}
+
+// selectModelPrices 按用户请求的模型名挑选价格条目。
+//
+// 匹配优先级（高到低）：精确 → 大小写无关 → basename → 剥离日期后缀。
+// 命中后返回 selected map，未命中模型放入 unmatched 列表反馈给前端。
+// models 为空时返回全部价格（用于"同步全部"场景）。
+func selectModelPrices(prices map[string]store.ModelPrice, models []string) (map[string]store.ModelPrice, []string) {
 	wanted := make([]string, 0, len(models))
 	seen := map[string]struct{}{}
 	for _, model := range models {
@@ -607,36 +759,108 @@ func selectModelPrices(prices map[string]store.ModelPrice, models []string) map[
 		wanted = append(wanted, model)
 	}
 	if len(wanted) == 0 {
-		return prices
+		copied := make(map[string]store.ModelPrice, len(prices))
+		maps.Copy(copied, prices)
+		return copied, nil
 	}
 
+	index := buildModelPriceIndex(prices)
 	selected := map[string]store.ModelPrice{}
+	unmatched := []string{}
 	for _, model := range wanted {
-		if price, ok := prices[model]; ok {
+		if price, ok := lookupModelPriceByIndex(index, prices, model); ok {
 			selected[model] = price
 			continue
 		}
-		if price, ok := findSuffixModelPrice(prices, model); ok {
-			selected[model] = price
-		}
+		unmatched = append(unmatched, model)
 	}
-	return selected
+	return selected, unmatched
 }
 
-func findSuffixModelPrice(prices map[string]store.ModelPrice, model string) (store.ModelPrice, bool) {
-	suffix := "/" + model
-	var match store.ModelPrice
-	matchedKey := ""
-	for key, price := range prices {
-		if !strings.HasSuffix(key, suffix) {
-			continue
+// modelDateSuffixRegex 匹配形如 "-20240101" / "-202401" 的日期版本后缀。
+var modelDateSuffixRegex = regexp.MustCompile(`-\d{6,8}$`)
+
+type modelPriceIndex struct {
+	exact        map[string]string // lowercase(full key) -> 原始 key
+	base         map[string]string // lowercase(basename(key)) -> 最短原始 key
+	dateStripped map[string]string // lowercase(stripDate(basename(key))) -> 最短原始 key
+}
+
+func buildModelPriceIndex(prices map[string]store.ModelPrice) *modelPriceIndex {
+	idx := &modelPriceIndex{
+		exact:        make(map[string]string, len(prices)),
+		base:         make(map[string]string),
+		dateStripped: make(map[string]string),
+	}
+	for key := range prices {
+		lower := strings.ToLower(key)
+		if existing, ok := idx.exact[lower]; !ok || len(key) < len(existing) {
+			idx.exact[lower] = key
 		}
-		if matchedKey == "" || len(key) < len(matchedKey) {
-			matchedKey = key
-			match = price
+		baseName := lastPathSegment(lower)
+		if existing, ok := idx.base[baseName]; !ok || len(key) < len(existing) {
+			idx.base[baseName] = key
+		}
+		stripped := stripModelDateSuffix(baseName)
+		if stripped != baseName {
+			if existing, ok := idx.dateStripped[stripped]; !ok || len(key) < len(existing) {
+				idx.dateStripped[stripped] = key
+			}
 		}
 	}
-	return match, matchedKey != ""
+	return idx
+}
+
+func lookupModelPriceByIndex(idx *modelPriceIndex, prices map[string]store.ModelPrice, model string) (store.ModelPrice, bool) {
+	if price, ok := prices[model]; ok {
+		return price, true
+	}
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if lower == "" {
+		return store.ModelPrice{}, false
+	}
+	if key, ok := idx.exact[lower]; ok {
+		if price, ok := prices[key]; ok {
+			return price, true
+		}
+	}
+	baseName := lastPathSegment(lower)
+	if key, ok := idx.base[baseName]; ok {
+		if price, ok := prices[key]; ok {
+			return price, true
+		}
+	}
+	stripped := stripModelDateSuffix(baseName)
+	if stripped != baseName {
+		if key, ok := idx.base[stripped]; ok {
+			if price, ok := prices[key]; ok {
+				return price, true
+			}
+		}
+		if key, ok := idx.dateStripped[stripped]; ok {
+			if price, ok := prices[key]; ok {
+				return price, true
+			}
+		}
+	}
+	if key, ok := idx.dateStripped[baseName]; ok {
+		if price, ok := prices[key]; ok {
+			return price, true
+		}
+	}
+	return store.ModelPrice{}, false
+}
+
+func lastPathSegment(value string) string {
+	idx := strings.LastIndex(value, "/")
+	if idx < 0 {
+		return value
+	}
+	return value[idx+1:]
+}
+
+func stripModelDateSuffix(value string) string {
+	return modelDateSuffixRegex.ReplaceAllString(value, "")
 }
 
 func readFloat(entry map[string]any, key string) (float64, bool) {

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { parseDocument } from 'yaml';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useAuthStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
 import { Input } from '@/components/ui/Input';
@@ -43,11 +44,14 @@ export function QuotaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortMode, setSortMode] = useState<QuotaSortMode>('default');
-  const [custom_displayLimitCount, custom_setDisplayLimitCount] = useState(
-    custom_DEFAULT_QUOTA_DISPLAY_LIMIT_COUNT
+  const [sortMode, setSortMode] = useLocalStorage<QuotaSortMode>(
+    'quotaPage.sortMode',
+    'default'
   );
-
+  
+  const [custom_displayLimitCount, custom_setDisplayLimitCount] = useState(
+    custom_DEFAULT_QUOTA_DISPLAY_LIMIT_COUNT);
+  
   const disableControls = connectionStatus !== 'connected';
   const sortOptions = useMemo(
     () => [

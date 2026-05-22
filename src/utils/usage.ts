@@ -393,12 +393,13 @@ export function extractTotalTokens(detail: unknown): number {
 
 export function calculateCost(
   detail: Pick<UsageDetail, 'tokens' | '__modelName' | '__resolvedModel'>,
-  modelPrices: Record<string, ModelPrice>
+  modelPrices: Record<string, ModelPrice> | ModelPriceIndex
 ): number {
   // Price preference: resolved upstream model (what the provider actually billed) → requested alias as fallback.
+  const index = ensureModelPriceIndex(modelPrices);
   const resolvedModel = detail.__resolvedModel || '';
   const requestedModel = detail.__modelName || '';
-  const price = modelPrices[resolvedModel] || modelPrices[requestedModel];
+  const price = lookupModelPrice(index, resolvedModel) ?? lookupModelPrice(index, requestedModel);
   if (!price) return 0;
 
   const inputTokens = Math.max(toFiniteNumber(detail.tokens.input_tokens), 0);
@@ -414,6 +415,102 @@ export function calculateCost(
     (completionTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.completion) || 0);
   const total = promptCost + cachedCost + completionCost;
   return Number.isFinite(total) && total > 0 ? total : 0;
+}
+
+/**
+ * 价格索引：在精确匹配基础上提供大小写无关、basename、剥离日期后缀的回退查找，
+ * 用于兼容 LiteLLM 与 CPA 实际模型名之间常见的命名差异。
+ */
+export interface ModelPriceIndex {
+  prices: Record<string, ModelPrice>;
+  exact: Record<string, string>;
+  base: Record<string, string>;
+  dateStripped: Record<string, string>;
+}
+
+const MODEL_PRICE_INDEX_BRAND = '__cliProxyModelPriceIndex__';
+const MODEL_DATE_SUFFIX_REGEX = /-\d{6,8}$/;
+const modelPriceIndexCache = new WeakMap<Record<string, ModelPrice>, ModelPriceIndex>();
+
+function lastPathSegment(value: string): string {
+  const slash = value.lastIndexOf('/');
+  return slash < 0 ? value : value.slice(slash + 1);
+}
+
+function stripModelDateSuffix(value: string): string {
+  return value.replace(MODEL_DATE_SUFFIX_REGEX, '');
+}
+
+function setShortest(target: Record<string, string>, key: string, candidate: string): void {
+  const existing = target[key];
+  if (!existing || candidate.length < existing.length) {
+    target[key] = candidate;
+  }
+}
+
+export function buildModelPriceIndex(prices: Record<string, ModelPrice>): ModelPriceIndex {
+  const exact: Record<string, string> = {};
+  const base: Record<string, string> = {};
+  const dateStripped: Record<string, string> = {};
+  Object.keys(prices).forEach((key) => {
+    const lower = key.toLowerCase();
+    setShortest(exact, lower, key);
+    const baseName = lastPathSegment(lower);
+    setShortest(base, baseName, key);
+    const stripped = stripModelDateSuffix(baseName);
+    if (stripped !== baseName) {
+      setShortest(dateStripped, stripped, key);
+    }
+  });
+  const index: ModelPriceIndex = { prices, exact, base, dateStripped };
+  Object.defineProperty(index, MODEL_PRICE_INDEX_BRAND, { value: true });
+  return index;
+}
+
+export function lookupModelPrice(
+  index: ModelPriceIndex,
+  model: string | undefined | null
+): ModelPrice | undefined {
+  if (!model) return undefined;
+  const { prices } = index;
+  const direct = prices[model];
+  if (direct) return direct;
+  const lower = model.trim().toLowerCase();
+  if (!lower) return undefined;
+  const exactKey = index.exact[lower];
+  if (exactKey && prices[exactKey]) return prices[exactKey];
+  const baseName = lastPathSegment(lower);
+  const baseKey = index.base[baseName];
+  if (baseKey && prices[baseKey]) return prices[baseKey];
+  const stripped = stripModelDateSuffix(baseName);
+  if (stripped !== baseName) {
+    const strippedBaseKey = index.base[stripped];
+    if (strippedBaseKey && prices[strippedBaseKey]) return prices[strippedBaseKey];
+    const strippedKey = index.dateStripped[stripped];
+    if (strippedKey && prices[strippedKey]) return prices[strippedKey];
+  }
+  const dateStrippedKey = index.dateStripped[baseName];
+  if (dateStrippedKey && prices[dateStrippedKey]) return prices[dateStrippedKey];
+  return undefined;
+}
+
+function isModelPriceIndex(value: unknown): value is ModelPriceIndex {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<string, unknown>)[MODEL_PRICE_INDEX_BRAND] === true
+  );
+}
+
+function ensureModelPriceIndex(
+  value: Record<string, ModelPrice> | ModelPriceIndex
+): ModelPriceIndex {
+  if (isModelPriceIndex(value)) return value;
+  const cached = modelPriceIndexCache.get(value);
+  if (cached) return cached;
+  const built = buildModelPriceIndex(value);
+  modelPriceIndexCache.set(value, built);
+  return built;
 }
 
 export function loadModelPrices(): Record<string, ModelPrice> {

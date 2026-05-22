@@ -1081,6 +1081,7 @@
     "model_price_saved": "Model price saved",
     "model_price_sync": "Sync Prices",
     "model_price_sync_success": "Synced {{count}} model prices from {{source}}",
+    "model_price_sync_unmatched_suffix": "; {{count}} model(s) had no matching price — edit them manually",
     "model_price_sync_failed": "Failed to sync model prices",
     "model_price_sync_no_models": "No models available to sync",
     "model_price_sync_requires_usage_service": "Price sync requires Usage Service. Open the Docker-hosted panel or configure a Usage Service URL under Configuration -> CPA-Manager Configuration.",

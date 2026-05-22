@@ -1076,6 +1076,7 @@
     "model_price_saved": "Цена модели сохранена",
     "model_price_sync": "Синхронизировать цены",
     "model_price_sync_success": "Синхронизировано {{count}} цен моделей из {{source}}",
+    "model_price_sync_unmatched_suffix": "; {{count}} модель(ей) без подходящей цены — отредактируйте их вручную",
     "model_price_sync_failed": "Не удалось синхронизировать цены моделей",
     "model_price_sync_no_models": "Нет моделей для синхронизации",
     "model_price_sync_requires_usage_service": "Для синхронизации цен нужен Usage Service. Откройте Docker-панель или укажите URL Usage Service в Configuration -> CPA-Manager Configuration.",

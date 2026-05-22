@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { calculateCost, collectUsageDetails, collectUsageDetailsWithEndpoint } from './usage';
+import {
+  buildModelPriceIndex,
+  calculateCost,
+  collectUsageDetails,
+  collectUsageDetailsWithEndpoint,
+  lookupModelPrice,
+} from './usage';
 
 describe('usage detail collection', () => {
   it('copies project id snapshots into normalized usage details', () => {
@@ -133,5 +139,65 @@ describe('calculateCost model price preference', () => {
       prices
     );
     expect(cost).toBeCloseTo(50);
+  });
+});
+
+describe('model price index fallback matching', () => {
+  const prices = {
+    'gpt-4o-2024-08-06': { prompt: 2.5, completion: 10, cache: 0.25 },
+    'anthropic/claude-3.5-sonnet': { prompt: 3, completion: 15, cache: 0.3 },
+    'openrouter/anthropic/claude-3.5-sonnet': { prompt: 3.1, completion: 15.1, cache: 0.31 },
+    'gemini/gemini-2.5-flash': { prompt: 0.075, completion: 0.3, cache: 0.01 },
+    'claude-sonnet-4-5-20250929': { prompt: 3.2, completion: 16, cache: 0.32 },
+  };
+
+  it('returns exact match before any fallback', () => {
+    const index = buildModelPriceIndex(prices);
+    expect(lookupModelPrice(index, 'gpt-4o-2024-08-06')?.prompt).toBe(2.5);
+  });
+
+  it('matches case-insensitively', () => {
+    const index = buildModelPriceIndex(prices);
+    expect(lookupModelPrice(index, 'GEMINI/Gemini-2.5-Flash')?.prompt).toBe(0.075);
+  });
+
+  it('matches by basename and prefers shortest prefix', () => {
+    const index = buildModelPriceIndex(prices);
+    // 'claude-3.5-sonnet' should resolve to anthropic/* (shorter) over openrouter/*.
+    expect(lookupModelPrice(index, 'claude-3.5-sonnet')?.prompt).toBe(3);
+  });
+
+  it('strips dated version suffixes when looking up', () => {
+    const index = buildModelPriceIndex(prices);
+    expect(lookupModelPrice(index, 'claude-sonnet-4-5')?.prompt).toBe(3.2);
+  });
+
+  it('returns undefined for unknown models', () => {
+    const index = buildModelPriceIndex(prices);
+    expect(lookupModelPrice(index, 'nonexistent-model')).toBeUndefined();
+  });
+
+  it('calculateCost uses fallback matching for free-form model names', () => {
+    const cost = calculateCost(
+      {
+        tokens: { input_tokens: 1_000_000, output_tokens: 0 },
+        __modelName: 'claude-sonnet-4-5-20250929',
+        __resolvedModel: 'claude-sonnet-4-5-20250929',
+      },
+      prices
+    );
+    expect(cost).toBeCloseTo(3.2);
+  });
+
+  it('calculateCost accepts a prebuilt ModelPriceIndex', () => {
+    const index = buildModelPriceIndex(prices);
+    const cost = calculateCost(
+      {
+        tokens: { input_tokens: 1_000_000, output_tokens: 0 },
+        __modelName: 'CLAUDE-3.5-Sonnet',
+      },
+      index
+    );
+    expect(cost).toBeCloseTo(3);
   });
 });
