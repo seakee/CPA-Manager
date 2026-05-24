@@ -70,6 +70,11 @@ type Detail struct {
 	ResolvedModel         string `json:"resolved_model,omitempty"`
 	Tokens                Tokens `json:"tokens"`
 	Failed                bool   `json:"failed"`
+	RequestCount          int64  `json:"request_count"`
+	SuccessCount          int64  `json:"success_count"`
+	FailureCount          int64  `json:"failure_count"`
+	LatencySumMS          int64  `json:"latency_sum_ms"`
+	LatencyCount          int64  `json:"latency_count"`
 }
 
 type ModelAggregate struct {
@@ -85,6 +90,7 @@ type Payload struct {
 	SuccessCount  int64                    `json:"success_count"`
 	FailureCount  int64                    `json:"failure_count"`
 	TotalTokens   int64                    `json:"total_tokens"`
+	Tokens        Tokens                   `json:"tokens,omitempty"`
 	APIs          map[string]*APIAggregate `json:"apis"`
 }
 

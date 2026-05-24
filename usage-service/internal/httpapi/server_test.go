@@ -205,6 +205,140 @@ func TestUsageImportAcceptsLegacyExportAndSkipsDuplicates(t *testing.T) {
 	}
 }
 
+func TestUsageSummaryReturnsAggregatesWithoutDetails(t *testing.T) {
+	handler := newTestHandler(t, "http://example.test", true)
+	payload := `{
+	  "version": 1,
+	  "exported_at": "2026-01-02T03:04:05Z",
+	  "usage": {
+	    "apis": {
+	      "POST /v1/chat/completions": {
+	        "models": {
+	          "gpt-4o": {
+	            "details": [
+	              {
+	                "timestamp": "2026-01-02T03:04:05Z",
+	                "source": "alice@example.com",
+	                "tokens": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+	                "failed": false
+	              }
+	            ]
+	          }
+	        }
+	      }
+	    }
+	  }
+	}`
+	postUsageImport(t, handler, payload)
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/usage/summary", nil)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("summary status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response struct {
+		TotalRequests int64 `json:"total_requests"`
+		SuccessCount  int64 `json:"success_count"`
+		FailureCount  int64 `json:"failure_count"`
+		TotalTokens   int64 `json:"total_tokens"`
+		APIs          map[string]struct {
+			Models map[string]struct {
+				Details []struct {
+					RequestCount int64 `json:"request_count"`
+					SuccessCount int64 `json:"success_count"`
+					Tokens       struct {
+						TotalTokens int64 `json:"total_tokens"`
+					} `json:"tokens"`
+				} `json:"details"`
+			} `json:"models"`
+		} `json:"apis"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if response.TotalRequests != 1 || response.SuccessCount != 1 || response.FailureCount != 0 || response.TotalTokens != 30 {
+		t.Fatalf("summary = %#v", response)
+	}
+	model := response.APIs["POST /v1/chat/completions"].Models["gpt-4o"]
+	if len(model.Details) != 1 || model.Details[0].RequestCount != 1 || model.Details[0].SuccessCount != 1 || model.Details[0].Tokens.TotalTokens != 30 {
+		t.Fatalf("model summary details = %#v", model.Details)
+	}
+}
+
+func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
+	handler := newTestHandler(t, "http://example.test", true)
+	payload := `{
+	  "version": 1,
+	  "exported_at": "2026-01-02T03:04:05Z",
+	  "usage": {
+	    "apis": {
+	      "POST /v1/chat/completions": {
+	        "models": {
+	          "gpt-4o": {
+	            "details": [
+	              {
+	                "timestamp": "2026-01-02T03:04:05Z",
+	                "source": "alice@example.com",
+	                "auth_index": "auth-1",
+	                "api_key_hash": "key-a",
+	                "account_snapshot": "alice@example.com",
+	                "tokens": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+	                "failed": false
+	              },
+	              {
+	                "timestamp": "2026-01-02T03:04:06Z",
+	                "source": "bob@example.com",
+	                "auth_index": "auth-2",
+	                "api_key_hash": "key-b",
+	                "account_snapshot": "bob@example.com",
+	                "tokens": {"input_tokens": 15, "output_tokens": 25, "total_tokens": 40},
+	                "failed": false
+	              }
+	            ]
+	          }
+	        }
+	      }
+	    }
+	  }
+	}`
+	postUsageImport(t, handler, payload)
+
+	for _, path := range []string{
+		"/v0/management/usage/accounts?page=1&page_size=1",
+		"/v0/management/usage/api-keys?page=1&page_size=1",
+		"/v0/management/usage/realtime?page=1&page_size=1",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer management-key")
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+
+			var response struct {
+				Page       int             `json:"page"`
+				PageSize   int             `json:"page_size"`
+				TotalItems int64           `json:"total_items"`
+				Usage      json.RawMessage `json:"usage"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Page != 1 || response.PageSize != 1 || response.TotalItems != 2 {
+				t.Fatalf("pagination response = %#v", response)
+			}
+			if len(response.Usage) == 0 || string(response.Usage) == "null" {
+				t.Fatalf("missing usage payload: %#v", response)
+			}
+		})
+	}
+}
+
 func postUsageImport(t *testing.T, handler http.Handler, payload string) struct {
 	Format      string   `json:"format"`
 	Added       int      `json:"added"`
@@ -778,19 +912,19 @@ func closeFloat(left float64, right float64) bool {
 
 func TestSelectModelPricesMatchesByPriorityAndReportsUnmatched(t *testing.T) {
 	prices := map[string]store.ModelPrice{
-		"gpt-4o-2024-08-06":                   {Prompt: 2.5, Completion: 10},
-		"anthropic/claude-3.5-sonnet":         {Prompt: 3, Completion: 15},
+		"gpt-4o-2024-08-06":                      {Prompt: 2.5, Completion: 10},
+		"anthropic/claude-3.5-sonnet":            {Prompt: 3, Completion: 15},
 		"openrouter/anthropic/claude-3.5-sonnet": {Prompt: 3.1, Completion: 15.1},
-		"gemini/gemini-2.5-flash":             {Prompt: 0.075, Completion: 0.3},
-		"claude-sonnet-4-5-20250929":          {Prompt: 3.2, Completion: 16},
+		"gemini/gemini-2.5-flash":                {Prompt: 0.075, Completion: 0.3},
+		"claude-sonnet-4-5-20250929":             {Prompt: 3.2, Completion: 16},
 	}
 
 	models := []string{
-		"gpt-4o-2024-08-06",         // 精确
-		"GEMINI/Gemini-2.5-Flash",   // 大小写不敏感
-		"claude-3.5-sonnet",         // basename：应选最短 anthropic/* 而非 openrouter/*
-		"claude-sonnet-4-5",         // 剥离日期后缀
-		"unknown-model-xyz",         // unmatched
+		"gpt-4o-2024-08-06",       // 精确
+		"GEMINI/Gemini-2.5-Flash", // 大小写不敏感
+		"claude-3.5-sonnet",       // basename：应选最短 anthropic/* 而非 openrouter/*
+		"claude-sonnet-4-5",       // 剥离日期后缀
+		"unknown-model-xyz",       // unmatched
 	}
 
 	selected, unmatched := selectModelPrices(prices, models)
@@ -836,14 +970,14 @@ func TestSelectModelPricesEmptyModelsReturnsAll(t *testing.T) {
 
 func TestExtractProxyURLFromBodyAcceptsMultipleShapes(t *testing.T) {
 	cases := map[string]string{
-		`"http://proxy:8080"`:                  "http://proxy:8080",
-		`{"proxy-url":"http://a:1"}`:           "http://a:1",
-		`{"proxyUrl":"http://b:2"}`:            "http://b:2",
-		`{"proxy_url":"http://c:3"}`:           "http://c:3",
-		`{"value":"http://d:4"}`:               "http://d:4",
-		`{"unrelated":"x"}`:                    "",
-		`{"proxy-url":" http://e:5 "}`:         "http://e:5",
-		``:                                     "",
+		`"http://proxy:8080"`:          "http://proxy:8080",
+		`{"proxy-url":"http://a:1"}`:   "http://a:1",
+		`{"proxyUrl":"http://b:2"}`:    "http://b:2",
+		`{"proxy_url":"http://c:3"}`:   "http://c:3",
+		`{"value":"http://d:4"}`:       "http://d:4",
+		`{"unrelated":"x"}`:            "",
+		`{"proxy-url":" http://e:5 "}`: "http://e:5",
+		``:                             "",
 	}
 	for body, want := range cases {
 		if got := extractProxyURLFromBody([]byte(body)); got != want {

@@ -381,8 +381,13 @@ export type MonitoringEventRow = {
   channelHost: string;
   channelDisabled: boolean;
   failed: boolean;
+  requestCount: number;
+  successCalls: number;
+  failureCalls: number;
   statsIncluded: boolean;
   latencyMs: number | null;
+  latencySumMs: number;
+  latencyCount: number;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -517,6 +522,11 @@ export type MonitoringMetadata = {
 
 export interface UseMonitoringDataParams {
   usage: unknown;
+  usagePages?: {
+    accounts?: { usage?: unknown } | null;
+    apiKeys?: { usage?: unknown } | null;
+    realtime?: { usage?: unknown } | null;
+  } | null;
   config: Config | null | undefined;
   modelPrices: Record<string, ModelPrice>;
   apiKeyAliases?: ApiKeyAlias[];
@@ -544,6 +554,9 @@ export interface UseMonitoringDataReturn {
   taskBuckets: MonitoringTaskBucketRow[];
   recentFailures: MonitoringFailureRow[];
   filteredRows: MonitoringEventRow[];
+  accountPageRows: MonitoringAccountRow[] | null;
+  apiKeyPageRows: MonitoringApiKeyRow[] | null;
+  realtimePageRows: MonitoringEventRow[] | null;
   refreshMeta: (showLoading?: boolean) => Promise<void>;
 }
 
@@ -698,7 +711,7 @@ const buildTimeline = (
     rows.forEach((row) => {
       const bucket = map.get(row.hourLabel);
       if (!bucket) return;
-      bucket.requests += 1;
+      bucket.requests += row.requestCount;
       bucket.tokens += row.totalTokens;
       bucket.cost += row.totalCost;
     });
@@ -715,7 +728,7 @@ const buildTimeline = (
       tokens: 0,
       cost: 0,
     };
-    existing.requests += 1;
+    existing.requests += row.requestCount;
     existing.tokens += row.totalTokens;
     existing.cost += row.totalCost;
     grouped.set(row.dayKey, existing);
@@ -743,7 +756,7 @@ const buildHourlyDistribution = (rows: MonitoringEventRow[]) => {
     const hour = Number(row.hourLabel.slice(0, 2));
     const bucket = Number.isFinite(hour) ? buckets[hour] : null;
     if (!bucket) return;
-    bucket.requests += 1;
+    bucket.requests += row.requestCount;
     bucket.tokens += row.totalTokens;
     bucket.cost += row.totalCost;
   });
@@ -760,8 +773,8 @@ const buildRecentPattern = (rows: MonitoringEventRow[], limit = 10) =>
     .map((row) => !row.failed);
 
 export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSummary => {
-  const totalCalls = rows.length;
-  const failureCalls = rows.filter((row) => row.failed).length;
+  const totalCalls = rows.reduce((sum, row) => sum + row.requestCount, 0);
+  const failureCalls = rows.reduce((sum, row) => sum + row.failureCalls, 0);
   const successCalls = Math.max(totalCalls - failureCalls, 0);
   const inputTokens = rows.reduce((sum, row) => sum + row.inputTokens, 0);
   const outputTokens = rows.reduce((sum, row) => sum + row.outputTokens, 0);
@@ -773,9 +786,8 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
   let latencySum = 0;
   let latencyCount = 0;
   rows.forEach((row) => {
-    if (row.latencyMs === null) return;
-    latencySum += row.latencyMs;
-    latencyCount += 1;
+    latencySum += row.latencySumMs;
+    latencyCount += row.latencyCount;
   });
 
   const taskMap = new Map<string, boolean>();
@@ -795,6 +807,7 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
   const recentRows = rows.filter(
     (row) => row.timestampMs >= windowStart && row.timestampMs <= nowMs
   );
+  const recentCalls = recentRows.reduce((sum, row) => sum + row.requestCount, 0);
   const recentTokens = recentRows.reduce((sum, row) => sum + row.totalTokens, 0);
 
   return {
@@ -809,7 +822,7 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
     totalTokens,
     totalCost,
     averageLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null,
-    rpm30m: recentRows.length / 30,
+    rpm30m: recentCalls / 30,
     tpm30m: recentTokens / 30,
     avgDailyRequests: totalCalls / activeDayCount,
     avgDailyTokens: totalTokens / activeDayCount,
@@ -817,7 +830,7 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
     approxTaskFailures,
     approxTaskSuccessRate:
       approxTasks > 0 ? Math.max(approxTasks - approxTaskFailures, 0) / approxTasks : 1,
-    zeroTokenCalls: zeroTokenRows.length,
+    zeroTokenCalls: zeroTokenRows.reduce((sum, row) => sum + row.requestCount, 0),
     zeroTokenModels: Array.from(new Set(zeroTokenRows.map((row) => row.model))).sort(),
   };
 };
@@ -890,9 +903,9 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     existing.authLabels.add(row.authLabel);
     existing.authIndices.add(row.authIndex);
     existing.channels.add(row.channel);
-    existing.totalCalls += 1;
-    existing.successCalls += row.failed ? 0 : 1;
-    existing.failureCalls += row.failed ? 1 : 0;
+    existing.totalCalls += row.requestCount;
+    existing.successCalls += row.successCalls;
+    existing.failureCalls += row.failureCalls;
     existing.inputTokens += row.inputTokens;
     existing.outputTokens += row.outputTokens;
     existing.cachedTokens += row.cachedTokens;
@@ -901,8 +914,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
 
     if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
+      existing.latencySum += row.latencySumMs;
+      existing.latencyCount += row.latencyCount;
     }
 
     const modelEntry = existing.modelMap.get(row.model) ?? {
@@ -918,9 +931,9 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       lastSeenAt: 0,
     };
 
-    modelEntry.totalCalls += 1;
-    modelEntry.successCalls += row.failed ? 0 : 1;
-    modelEntry.failureCalls += row.failed ? 1 : 0;
+    modelEntry.totalCalls += row.requestCount;
+    modelEntry.successCalls += row.successCalls;
+    modelEntry.failureCalls += row.failureCalls;
     modelEntry.inputTokens += row.inputTokens;
     modelEntry.outputTokens += row.outputTokens;
     modelEntry.cachedTokens += row.cachedTokens;
@@ -1061,9 +1074,9 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
     existing.sourceLabels.add(row.sourceMasked || row.source);
     existing.channels.add(row.channel);
 
-    existing.totalCalls += 1;
-    existing.successCalls += row.failed ? 0 : 1;
-    existing.failureCalls += row.failed ? 1 : 0;
+    existing.totalCalls += row.requestCount;
+    existing.successCalls += row.successCalls;
+    existing.failureCalls += row.failureCalls;
     existing.inputTokens += row.inputTokens;
     existing.outputTokens += row.outputTokens;
     existing.cachedTokens += row.cachedTokens;
@@ -1072,8 +1085,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
     existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
 
     if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
+      existing.latencySum += row.latencySumMs;
+      existing.latencyCount += row.latencyCount;
     }
 
     const modelEntry = existing.modelMap.get(row.model) ?? {
@@ -1089,9 +1102,9 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       lastSeenAt: 0,
     };
 
-    modelEntry.totalCalls += 1;
-    modelEntry.successCalls += row.failed ? 0 : 1;
-    modelEntry.failureCalls += row.failed ? 1 : 0;
+    modelEntry.totalCalls += row.requestCount;
+    modelEntry.successCalls += row.successCalls;
+    modelEntry.failureCalls += row.failureCalls;
     modelEntry.inputTokens += row.inputTokens;
     modelEntry.outputTokens += row.outputTokens;
     modelEntry.cachedTokens += row.cachedTokens;
@@ -1207,8 +1220,8 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
     };
 
     existing.rows.push(row);
-    existing.successCalls += row.failed ? 0 : 1;
-    existing.failureCalls += row.failed ? 1 : 0;
+    existing.successCalls += row.successCalls;
+    existing.failureCalls += row.failureCalls;
     existing.inputTokens += row.inputTokens;
     existing.outputTokens += row.outputTokens;
     existing.cachedTokens += row.cachedTokens;
@@ -1222,8 +1235,8 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
     }
 
     if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
+      existing.latencySum += row.latencySumMs;
+      existing.latencyCount += row.latencyCount;
     }
 
     grouped.set(key, existing);
@@ -1310,8 +1323,8 @@ const buildModelShareRows = (rows: MonitoringEventRow[]) => {
       totalTokens: 0,
       totalCost: 0,
     };
-    existing.requests += 1;
-    existing.failures += row.failed ? 1 : 0;
+    existing.requests += row.requestCount;
+    existing.failures += row.failureCalls;
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
     grouped.set(row.model, existing);
@@ -1373,13 +1386,13 @@ const buildChannelRows = (rows: MonitoringEventRow[]) => {
       existing.planTypes.add(row.planType);
     }
     existing.models.add(row.model);
-    existing.requests += 1;
-    existing.failures += row.failed ? 1 : 0;
+    existing.requests += row.requestCount;
+    existing.failures += row.failureCalls;
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
     if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
+      existing.latencySum += row.latencySumMs;
+      existing.latencyCount += row.latencyCount;
     }
     grouped.set(key, existing);
   });
@@ -1434,15 +1447,15 @@ const buildModelRows = (rows: MonitoringEventRow[]) => {
       channels: new Set<string>(),
     };
 
-    existing.requests += 1;
-    existing.failures += row.failed ? 1 : 0;
+    existing.requests += row.requestCount;
+    existing.failures += row.failureCalls;
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
     existing.sources.add(row.source);
     existing.channels.add(row.channel);
     if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
+      existing.latencySum += row.latencySumMs;
+      existing.latencyCount += row.latencyCount;
     }
 
     grouped.set(row.model, existing);
@@ -1491,13 +1504,13 @@ const buildFailureSourceRows = (rows: MonitoringEventRow[]) => {
       latencyCount: 0,
     };
 
-    existing.totalRequests += 1;
+    existing.totalRequests += row.requestCount;
     existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
     if (row.failed) {
-      existing.failures += 1;
+      existing.failures += row.failureCalls;
       if (row.latencyMs !== null) {
-        existing.latencySum += row.latencyMs;
-        existing.latencyCount += 1;
+        existing.latencySum += row.latencySumMs;
+        existing.latencyCount += row.latencyCount;
       }
     }
 
@@ -1564,15 +1577,15 @@ const buildTaskBuckets = (rows: MonitoringEventRow[]) => {
       maxLatencyMs: null,
     };
 
-    existing.calls += 1;
-    existing.failedCalls += row.failed ? 1 : 0;
+    existing.calls += row.requestCount;
+    existing.failedCalls += row.failureCalls;
     existing.models.add(row.model);
     existing.endpoints.add(row.endpointPath || row.endpoint);
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
     if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
+      existing.latencySum += row.latencySumMs;
+      existing.latencyCount += row.latencyCount;
       existing.maxLatencyMs = Math.max(existing.maxLatencyMs ?? 0, row.latencyMs);
     }
 
@@ -1692,6 +1705,22 @@ const buildEventRows = (
         Number(detail.tokens?.total_tokens) || 0,
         extractTotalTokens(detail)
       );
+      const requestCount = Math.max(Number(detail.request_count) || 1, 1);
+      const successCalls = Math.max(
+        Number(detail.success_count) || (detail.failed === true ? 0 : requestCount),
+        0
+      );
+      const failureCalls = Math.max(
+        Number(detail.failure_count) || (detail.failed === true ? requestCount : 0),
+        0
+      );
+      const latencyCount = Math.max(Number(detail.latency_count) || 0, 0);
+      const latencySumMs =
+        latencyCount > 0
+          ? Math.max(Number(detail.latency_sum_ms) || 0, 0)
+          : typeof detail.latency_ms === 'number'
+            ? detail.latency_ms
+            : 0;
       const totalCost = calculateCost(detail, modelPriceIndex);
       const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
       const dayKey = buildLocalDayKey(timestampMs);
@@ -1728,8 +1757,14 @@ const buildEventRows = (
         channelHost: channelMeta?.host || '-',
         channelDisabled: channelMeta?.disabled || false,
         failed: detail.failed === true,
+        requestCount,
+        successCalls,
+        failureCalls,
         statsIncluded,
         latencyMs: typeof detail.latency_ms === 'number' ? detail.latency_ms : null,
+        latencySumMs,
+        latencyCount:
+          latencyCount > 0 ? latencyCount : typeof detail.latency_ms === 'number' ? 1 : 0,
         inputTokens,
         outputTokens,
         reasoningTokens,
@@ -1804,6 +1839,7 @@ const loadMonitoringMetaPayload = async (
 
 export function useMonitoringData({
   usage,
+  usagePages,
   config,
   modelPrices,
   apiKeyAliases,
@@ -1905,25 +1941,90 @@ export function useMonitoringData({
 
   const modelPriceIndex = useMemo(() => buildModelPriceIndex(modelPrices), [modelPrices]);
 
-  const allRows = useMemo(() => {
-    const details = collectUsageDetailsWithEndpoint(usage);
-    return buildEventRows(
-      details,
-      authMetaMap,
+  const buildRowsForUsage = useCallback(
+    (payload: unknown) => {
+      const details = collectUsageDetailsWithEndpoint(payload);
+      return buildEventRows(
+        details,
+        authMetaMap,
+        authFileMap,
+        sourceInfoMap,
+        channelByAuthIndex,
+        modelPriceIndex,
+        apiKeyDisplayMap
+      ).sort((left, right) => right.timestampMs - left.timestampMs);
+    },
+    [
+      apiKeyDisplayMap,
       authFileMap,
-      sourceInfoMap,
+      authMetaMap,
       channelByAuthIndex,
       modelPriceIndex,
-      apiKeyDisplayMap
-    ).sort((left, right) => right.timestampMs - left.timestampMs);
+      sourceInfoMap,
+    ]
+  );
+
+  const allRows = useMemo(() => {
+    return buildRowsForUsage(usage);
+  }, [buildRowsForUsage, usage]);
+
+  const accountPageRows = useMemo(() => {
+    const pageUsage = usagePages?.accounts?.usage;
+    if (!pageUsage) return null;
+    const rows = buildRangeFilteredRows(
+      buildRowsForUsage(pageUsage),
+      timeRange,
+      customTimeRange,
+      searchQuery,
+      searchApiKeyHash
+    );
+    return buildAccountRows(rows);
   }, [
-    apiKeyDisplayMap,
-    authFileMap,
-    authMetaMap,
-    channelByAuthIndex,
-    modelPriceIndex,
-    sourceInfoMap,
-    usage,
+    buildRowsForUsage,
+    customTimeRange,
+    searchApiKeyHash,
+    searchQuery,
+    timeRange,
+    usagePages?.accounts?.usage,
+  ]);
+
+  const apiKeyPageRows = useMemo(() => {
+    const pageUsage = usagePages?.apiKeys?.usage;
+    if (!pageUsage) return null;
+    const rows = buildRangeFilteredRows(
+      buildRowsForUsage(pageUsage),
+      timeRange,
+      customTimeRange,
+      searchQuery,
+      searchApiKeyHash
+    );
+    return buildApiKeyRows(rows);
+  }, [
+    buildRowsForUsage,
+    customTimeRange,
+    searchApiKeyHash,
+    searchQuery,
+    timeRange,
+    usagePages?.apiKeys?.usage,
+  ]);
+
+  const realtimePageRows = useMemo(() => {
+    const pageUsage = usagePages?.realtime?.usage;
+    if (!pageUsage) return null;
+    return buildRangeFilteredRows(
+      buildRowsForUsage(pageUsage),
+      timeRange,
+      customTimeRange,
+      searchQuery,
+      searchApiKeyHash
+    );
+  }, [
+    buildRowsForUsage,
+    customTimeRange,
+    searchApiKeyHash,
+    searchQuery,
+    timeRange,
+    usagePages?.realtime?.usage,
   ]);
 
   const filteredRows = useMemo(
@@ -1985,6 +2086,9 @@ export function useMonitoringData({
     taskBuckets,
     recentFailures,
     filteredRows,
+    accountPageRows,
+    apiKeyPageRows,
+    realtimePageRows,
     refreshMeta,
   };
 }

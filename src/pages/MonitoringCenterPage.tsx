@@ -269,6 +269,25 @@ const buildPaginationState = <T,>(
   };
 };
 
+const buildRemotePaginationState = <T,>(
+  items: readonly T[],
+  page: number,
+  pageSize: number,
+  count: number
+): PaginationState<T> => {
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, count) / safePageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  const startItem = count > 0 ? (currentPage - 1) * safePageSize + 1 : 0;
+  return {
+    currentPage,
+    totalPages,
+    pageItems: [...items],
+    startItem,
+    endItem: count > 0 ? Math.min(startItem + items.length - 1, count) : 0,
+  };
+};
+
 const parsePageSize = (value: string, fallback: number) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -1956,8 +1975,66 @@ export function MonitoringCenterPage() {
     return '';
   }, [customDraftEndMs, customDraftStartMs, t]);
 
+  const usageQuery = useMemo(() => {
+    const bounds = getRangeBounds(timeRange, Date.now(), customTimeRange);
+    if (!bounds) return undefined;
+    return {
+      startMs: Number.isFinite(bounds.startMs) ? bounds.startMs : undefined,
+      endMs: Number.isFinite(bounds.endMs) ? bounds.endMs : undefined,
+      account: selectedAccount !== 'all' ? selectedAccount : undefined,
+      provider: selectedProvider !== 'all' ? selectedProvider : undefined,
+      model: selectedModel !== 'all' ? selectedModel : undefined,
+      channel: selectedChannel !== 'all' ? selectedChannel : undefined,
+      apiKeyHash: selectedApiKeyHash !== 'all' ? selectedApiKeyHash : undefined,
+      status: selectedStatus !== 'all' ? selectedStatus : undefined,
+      search: deferredSearch.trim() || undefined,
+      searchApiKeyHash: deferredSearch.trim() ? deferredSearchApiKeyHash : undefined,
+    };
+  }, [
+    customTimeRange,
+    deferredSearch,
+    deferredSearchApiKeyHash,
+    selectedAccount,
+    selectedApiKeyHash,
+    selectedChannel,
+    selectedModel,
+    selectedProvider,
+    selectedStatus,
+    timeRange,
+  ]);
+
+  const usagePageQueries = useMemo(
+    () => ({
+      accounts: {
+        page: accountPage,
+        pageSize: accountPageSize,
+        sortKey: accountSort.key,
+        sortDirection: accountSort.direction,
+      },
+      apiKeys: {
+        page: apiKeyPage,
+        pageSize: apiKeyPageSize,
+      },
+      realtime: {
+        page: realtimePage,
+        pageSize: realtimePageSize,
+      },
+    }),
+    [
+      accountPage,
+      accountPageSize,
+      accountSort.direction,
+      accountSort.key,
+      apiKeyPage,
+      apiKeyPageSize,
+      realtimePage,
+      realtimePageSize,
+    ]
+  );
+
   const {
     usage,
+    usagePages,
     loading: usageLoading,
     error: usageError,
     lastRefreshedAt,
@@ -1970,16 +2047,20 @@ export function MonitoringCenterPage() {
     exportUsage,
     importUsage,
     loadUsage,
-  } = useUsageData();
+  } = useUsageData(usageQuery, usagePageQueries);
 
   const {
     loading: monitoringLoading,
     error: monitoringError,
     authFiles,
     filteredRows,
+    accountPageRows,
+    apiKeyPageRows,
+    realtimePageRows,
     refreshMeta,
   } = useMonitoringData({
     usage,
+    usagePages,
     config,
     modelPrices,
     apiKeyAliases,
@@ -2256,22 +2337,64 @@ export function MonitoringCenterPage() {
     () => sortAccountRows(accountRows, accountSort),
     [accountRows, accountSort]
   );
+  const displayedAccountRows = useMemo(
+    () => (accountPageRows ? sortAccountRows(accountPageRows, accountSort) : sortedAccountRows),
+    [accountPageRows, accountSort, sortedAccountRows]
+  );
+  const accountTotalCount =
+    accountPageRows && usagePages?.accounts
+      ? Math.max(0, usagePages.accounts.total_items)
+      : sortedAccountRows.length;
   const groupedRealtimeRows = useMemo(
     () => buildRealtimeMonitorRows(scopedStatsRows),
     [scopedStatsRows]
   );
-  const realtimeLogRows = useMemo(() => buildRealtimeLogRows(scopedRows), [scopedRows]);
+  const displayedApiKeyRows = apiKeyPageRows ?? apiKeyRows;
+  const apiKeyTotalCount =
+    apiKeyPageRows && usagePages?.apiKeys ? Math.max(0, usagePages.apiKeys.total_items) : apiKeyRows.length;
+  const realtimeLogRows = useMemo(
+    () => buildRealtimeLogRows(realtimePageRows ?? scopedRows),
+    [realtimePageRows, scopedRows]
+  );
+  const realtimeTotalCount =
+    realtimePageRows && usagePages?.realtime
+      ? Math.max(0, usagePages.realtime.total_items)
+      : realtimeLogRows.length;
   const accountPagination = useMemo(
-    () => buildPaginationState(sortedAccountRows, accountPage, accountPageSize),
-    [accountPage, accountPageSize, sortedAccountRows]
+    () =>
+      accountPageRows && usagePages?.accounts
+        ? buildRemotePaginationState(
+            displayedAccountRows,
+            usagePages.accounts.page,
+            usagePages.accounts.page_size,
+            usagePages.accounts.total_items
+          )
+        : buildPaginationState(sortedAccountRows, accountPage, accountPageSize),
+    [accountPage, accountPageRows, accountPageSize, displayedAccountRows, sortedAccountRows, usagePages?.accounts]
   );
   const apiKeyPagination = useMemo(
-    () => buildPaginationState(apiKeyRows, apiKeyPage, apiKeyPageSize),
-    [apiKeyPage, apiKeyPageSize, apiKeyRows]
+    () =>
+      apiKeyPageRows && usagePages?.apiKeys
+        ? buildRemotePaginationState(
+            displayedApiKeyRows,
+            usagePages.apiKeys.page,
+            usagePages.apiKeys.page_size,
+            usagePages.apiKeys.total_items
+          )
+        : buildPaginationState(apiKeyRows, apiKeyPage, apiKeyPageSize),
+    [apiKeyPage, apiKeyPageRows, apiKeyPageSize, apiKeyRows, displayedApiKeyRows, usagePages?.apiKeys]
   );
   const realtimePagination = useMemo(
-    () => buildPaginationState(realtimeLogRows, realtimePage, realtimePageSize),
-    [realtimeLogRows, realtimePage, realtimePageSize]
+    () =>
+      realtimePageRows && usagePages?.realtime
+        ? buildRemotePaginationState(
+            realtimeLogRows,
+            usagePages.realtime.page,
+            usagePages.realtime.page_size,
+            usagePages.realtime.total_items
+          )
+        : buildPaginationState(realtimeLogRows, realtimePage, realtimePageSize),
+    [realtimeLogRows, realtimePage, realtimePageRows, realtimePageSize, usagePages?.realtime]
   );
   const accountPageResetState = useMemo<AccountOverviewPageResetState>(
     () => ({
@@ -3511,7 +3634,7 @@ export function MonitoringCenterPage() {
                     </Fragment>
                   );
                 })}
-                {sortedAccountRows.length === 0 ? (
+                {accountTotalCount === 0 ? (
                   <tr>
                     <td colSpan={accountOverviewColumns.length}>{renderMonitoringEmptyState()}</td>
                   </tr>
@@ -3519,7 +3642,7 @@ export function MonitoringCenterPage() {
               </tbody>
             </table>
           </div>
-        ) : sortedAccountRows.length > 0 ? (
+        ) : accountPagination.pageItems.length > 0 ? (
           <div className={styles.accountOverviewCardGrid}>
             {accountPagination.pageItems.map((row) => {
               const authState = accountAuthStateByRowId.get(row.id) ?? EMPTY_ACCOUNT_AUTH_STATE;
@@ -3550,7 +3673,7 @@ export function MonitoringCenterPage() {
           renderMonitoringEmptyState()
         )}
         <PaginationControls
-          count={sortedAccountRows.length}
+          count={accountTotalCount}
           currentPage={accountPagination.currentPage}
           totalPages={accountPagination.totalPages}
           startItem={accountPagination.startItem}
@@ -3580,7 +3703,7 @@ export function MonitoringCenterPage() {
         className={styles.apiKeyPanel}
         extra={
           <div className={styles.inlineMetrics}>
-            <span>{t('monitoring.api_key_summary_keys_count', { count: apiKeyRows.length })}</span>
+            <span>{t('monitoring.api_key_summary_keys_count', { count: apiKeyTotalCount })}</span>
           </div>
         }
       >
@@ -3647,7 +3770,7 @@ export function MonitoringCenterPage() {
                   </Fragment>
                 );
               })}
-              {apiKeyRows.length === 0 ? (
+              {apiKeyTotalCount === 0 ? (
                 <tr>
                   <td colSpan={apiKeyOverviewColumns.length}>{renderMonitoringEmptyState()}</td>
                 </tr>
@@ -3656,7 +3779,7 @@ export function MonitoringCenterPage() {
           </table>
         </div>
         <PaginationControls
-          count={apiKeyRows.length}
+          count={apiKeyTotalCount}
           currentPage={apiKeyPagination.currentPage}
           totalPages={apiKeyPagination.totalPages}
           startItem={apiKeyPagination.startItem}
@@ -3675,7 +3798,7 @@ export function MonitoringCenterPage() {
         className={styles.realtimePanel}
         extra={
           <div className={`${styles.inlineMetrics} ${styles.realtimeHeaderActions}`}>
-            <span>{`${t('monitoring.log_rows')}: ${realtimeLogRows.length}`}</span>
+            <span>{`${t('monitoring.log_rows')}: ${realtimeTotalCount}`}</span>
             <span>{`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}</span>
             <button
               type="button"
@@ -3789,7 +3912,7 @@ export function MonitoringCenterPage() {
                   </tr>
                 );
               })}
-              {realtimeLogRows.length === 0 ? (
+              {realtimeTotalCount === 0 ? (
                 <tr>
                   <td colSpan={10}>{renderMonitoringEmptyState()}</td>
                 </tr>
@@ -3798,7 +3921,7 @@ export function MonitoringCenterPage() {
           </table>
         </div>
         <PaginationControls
-          count={realtimeLogRows.length}
+          count={realtimeTotalCount}
           currentPage={realtimePagination.currentPage}
           totalPages={realtimePagination.totalPages}
           startItem={realtimePagination.startItem}

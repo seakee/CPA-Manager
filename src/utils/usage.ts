@@ -41,6 +41,11 @@ export interface UsageDetail {
   latency_ms?: number;
   tokens: UsageTokens;
   failed: boolean;
+  request_count?: number;
+  success_count?: number;
+  failure_count?: number;
+  latency_sum_ms?: number;
+  latency_count?: number;
   __modelName?: string;
   __resolvedModel?: string;
   __timestampMs?: number;
@@ -289,6 +294,11 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           latency_ms: latencyMs ?? undefined,
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
+          request_count: toPositiveNumber(detailRaw.request_count ?? detailRaw.requestCount),
+          success_count: toPositiveNumber(detailRaw.success_count ?? detailRaw.successCount),
+          failure_count: toPositiveNumber(detailRaw.failure_count ?? detailRaw.failureCount),
+          latency_sum_ms: toPositiveNumber(detailRaw.latency_sum_ms ?? detailRaw.latencySumMs),
+          latency_count: toPositiveNumber(detailRaw.latency_count ?? detailRaw.latencyCount),
           __modelName: modelName,
           __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
@@ -359,6 +369,11 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           latency_ms: latencyMs ?? undefined,
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
+          request_count: toPositiveNumber(detailRaw.request_count ?? detailRaw.requestCount),
+          success_count: toPositiveNumber(detailRaw.success_count ?? detailRaw.successCount),
+          failure_count: toPositiveNumber(detailRaw.failure_count ?? detailRaw.failureCount),
+          latency_sum_ms: toPositiveNumber(detailRaw.latency_sum_ms ?? detailRaw.latencySumMs),
+          latency_count: toPositiveNumber(detailRaw.latency_count ?? detailRaw.latencyCount),
           __modelName: modelName,
           __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __endpoint: endpoint,

@@ -31,6 +31,35 @@ export interface UsageServiceApiError extends Error {
   data?: unknown;
 }
 
+export interface UsageQuery {
+  startMs?: number;
+  endMs?: number;
+  account?: string;
+  provider?: string;
+  model?: string;
+  channel?: string;
+  apiKeyHash?: string;
+  status?: 'success' | 'failed';
+  search?: string;
+  searchApiKeyHash?: string;
+}
+
+export type UsagePageKind = 'accounts' | 'api-keys' | 'realtime';
+
+export interface UsagePageQuery {
+  page: number;
+  pageSize: number;
+  sortKey?: string;
+  sortDirection?: 'asc' | 'desc';
+}
+
+export interface UsagePageResponse {
+  page: number;
+  page_size: number;
+  total_items: number;
+  usage: UsagePayload;
+}
+
 export interface UsageServiceInfo {
   service?: string;
   mode?: string;
@@ -270,6 +299,25 @@ const parseContentDispositionFilename = (value: string): string => {
   return plainMatch?.[1]?.trim() || '';
 };
 
+const appendUsageQueryParams = (params: URLSearchParams, query?: UsageQuery) => {
+  const startMs = query?.startMs;
+  const endMs = query?.endMs;
+  if (Number.isFinite(startMs)) {
+    params.set('start_ms', String(Math.trunc(startMs as number)));
+  }
+  if (Number.isFinite(endMs)) {
+    params.set('end_ms', String(Math.trunc(endMs as number)));
+  }
+  if (query?.account) params.set('account', query.account);
+  if (query?.provider) params.set('provider', query.provider);
+  if (query?.model) params.set('model', query.model);
+  if (query?.channel) params.set('channel', query.channel);
+  if (query?.apiKeyHash) params.set('api_key_hash', query.apiKeyHash);
+  if (query?.status) params.set('status', query.status);
+  if (query?.search) params.set('search', query.search);
+  if (query?.searchApiKeyHash) params.set('search_api_key_hash', query.searchApiKeyHash);
+};
+
 export const usageServiceApi = {
   getInfo: async (base: string): Promise<UsageServiceInfo> => {
     return withUsageServiceError(async () => {
@@ -332,12 +380,57 @@ export const usageServiceApi = {
     });
   },
 
-  getUsage: async (base: string, managementKey?: string): Promise<UsagePayload> => {
+  getUsage: async (
+    base: string,
+    managementKey?: string,
+    query?: UsageQuery
+  ): Promise<UsagePayload> => {
     return withUsageServiceError(async () => {
+      const headers = authHeaders(managementKey);
+      const params = new URLSearchParams();
+      appendUsageQueryParams(params, query);
+      const summaryPath = `/v0/management/usage/summary${params.size > 0 ? `?${params}` : ''}`;
+      try {
+        const response = await axios.get<UsagePayload>(buildUrl(base, summaryPath), {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers,
+        });
+        return response.data;
+      } catch (error) {
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (status && status !== 404 && status !== 405) {
+          throw error;
+        }
+      }
       const response = await axios.get<UsagePayload>(buildUrl(base, '/v0/management/usage'), {
         timeout: USAGE_SERVICE_TIMEOUT_MS,
-        headers: authHeaders(managementKey),
+        headers,
       });
+      return response.data;
+    });
+  },
+
+  getUsagePage: async (
+    base: string,
+    managementKey: string | undefined,
+    kind: UsagePageKind,
+    query: UsageQuery | undefined,
+    pageQuery: UsagePageQuery
+  ): Promise<UsagePageResponse> => {
+    return withUsageServiceError(async () => {
+      const params = new URLSearchParams();
+      appendUsageQueryParams(params, query);
+      params.set('page', String(Math.max(1, Math.trunc(pageQuery.page))));
+      params.set('page_size', String(Math.max(1, Math.trunc(pageQuery.pageSize))));
+      if (pageQuery.sortKey) params.set('sort_key', pageQuery.sortKey);
+      if (pageQuery.sortDirection) params.set('sort_direction', pageQuery.sortDirection);
+      const response = await axios.get<UsagePageResponse>(
+        buildUrl(base, `/v0/management/usage/${kind}?${params}`),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
       return response.data;
     });
   },

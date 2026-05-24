@@ -7,6 +7,9 @@ import {
   type ApiKeyAliasesResponse,
   type ModelPricesResponse,
   type ModelPriceSyncResponse,
+  type UsagePageQuery,
+  type UsagePageResponse,
+  type UsageQuery,
   type UsageExportResponse,
   type UsageImportResponse,
 } from '@/services/api/usageService';
@@ -23,8 +26,21 @@ export interface UsagePayload {
   [key: string]: unknown;
 }
 
+export type UsagePageQueries = {
+  accounts?: UsagePageQuery;
+  apiKeys?: UsagePageQuery;
+  realtime?: UsagePageQuery;
+};
+
+export type UsagePages = {
+  accounts?: UsagePageResponse;
+  apiKeys?: UsagePageResponse;
+  realtime?: UsagePageResponse;
+};
+
 export interface UseUsageDataReturn {
   usage: UsagePayload | null;
+  usagePages: UsagePages | null;
   loading: boolean;
   error: string;
   lastRefreshedAt: Date | null;
@@ -39,12 +55,23 @@ export interface UseUsageDataReturn {
   loadUsage: () => Promise<void>;
 }
 
-export function useUsageData(): UseUsageDataReturn {
+const isUsagePageFallbackError = (error: unknown) => {
+  if (!(error instanceof Error)) return false;
+  const status = (error as { status?: number }).status;
+  const code = (error as { code?: string }).code;
+  return status === 404 || status === 405 || code === 'method_not_allowed';
+};
+
+export function useUsageData(
+  usageQuery?: UsageQuery,
+  usagePageQueries?: UsagePageQueries
+): UseUsageDataReturn {
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const usageServiceEnabled = useUsageServiceStore((state) => state.enabled);
   const usageServiceBase = useUsageServiceStore((state) => state.serviceBase);
   const [usage, setUsage] = useState<UsagePayload | null>(null);
+  const [usagePages, setUsagePages] = useState<UsagePages | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
@@ -138,6 +165,61 @@ export function useUsageData(): UseUsageDataReturn {
     [managementKey, resolveUsageServiceBase]
   );
 
+  const loadUsagePages = useCallback(
+    async (serviceBase: string): Promise<UsagePages | null> => {
+      if (!usagePageQueries) return null;
+      try {
+        const [accounts, apiKeys, realtime] = await Promise.all([
+          usagePageQueries.accounts
+            ? usageServiceApi.getUsagePage(
+                serviceBase,
+                managementKey,
+                'accounts',
+                usageQuery,
+                usagePageQueries.accounts
+              )
+            : Promise.resolve(undefined),
+          usagePageQueries.apiKeys
+            ? usageServiceApi.getUsagePage(
+                serviceBase,
+                managementKey,
+                'api-keys',
+                usageQuery,
+                usagePageQueries.apiKeys
+              )
+            : Promise.resolve(undefined),
+          usagePageQueries.realtime
+            ? usageServiceApi.getUsagePage(
+                serviceBase,
+                managementKey,
+                'realtime',
+                usageQuery,
+                usagePageQueries.realtime
+              )
+            : Promise.resolve(undefined),
+        ]);
+        return { accounts, apiKeys, realtime };
+      } catch (error) {
+        if (isUsagePageFallbackError(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    [
+      managementKey,
+      usagePageQueries?.accounts?.page,
+      usagePageQueries?.accounts?.pageSize,
+      usagePageQueries?.accounts?.sortDirection,
+      usagePageQueries?.accounts?.sortKey,
+      usagePageQueries?.apiKeys?.page,
+      usagePageQueries?.apiKeys?.pageSize,
+      usagePageQueries?.realtime?.page,
+      usagePageQueries?.realtime?.pageSize,
+      usageQuery,
+    ]
+  );
+
   const loadModelPricesFromStorage = useCallback(async () => {
     const fallbackPrices = loadModelPrices();
     try {
@@ -184,13 +266,18 @@ export function useUsageData(): UseUsageDataReturn {
       if (!serviceBase) {
         setUsageServiceAvailable(false);
         setUsage(null);
+        setUsagePages(null);
         setLastRefreshedAt(null);
         return;
       }
       setUsageServiceAvailable(true);
-      const payload = await usageServiceApi.getUsage(serviceBase, managementKey);
+      const [payload, pages] = await Promise.all([
+        usageServiceApi.getUsage(serviceBase, managementKey, usageQuery),
+        loadUsagePages(serviceBase),
+      ]);
       if (requestIdRef.current !== requestId) return;
       setUsage(payload ?? null);
+      setUsagePages(pages);
       setLastRefreshedAt(new Date());
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
@@ -200,7 +287,21 @@ export function useUsageData(): UseUsageDataReturn {
         setLoading(false);
       }
     }
-  }, [managementKey, resolveUsageServiceBase]);
+  }, [
+    loadUsagePages,
+    managementKey,
+    resolveUsageServiceBase,
+    usageQuery?.account,
+    usageQuery?.apiKeyHash,
+    usageQuery?.channel,
+    usageQuery?.endMs,
+    usageQuery?.model,
+    usageQuery?.provider,
+    usageQuery?.search,
+    usageQuery?.searchApiKeyHash,
+    usageQuery?.startMs,
+    usageQuery?.status,
+  ]);
 
   useEffect(() => {
     void loadModelPricesFromStorage();
@@ -234,6 +335,7 @@ export function useUsageData(): UseUsageDataReturn {
 
   return {
     usage,
+    usagePages,
     loading,
     error,
     lastRefreshedAt,
