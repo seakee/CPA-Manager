@@ -15,7 +15,12 @@ import {
 } from '@/services/api/usageService';
 import { useAuthStore, useUsageServiceStore } from '@/stores';
 import { detectApiBaseFromLocation } from '@/utils/connection';
-import { clearModelPrices, loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
+import {
+  clearModelPrices,
+  loadModelPrices as loadStoredModelPrices,
+  saveModelPrices,
+  type ModelPrice,
+} from '@/utils/usage';
 
 export interface UsagePayload {
   total_requests?: number;
@@ -48,11 +53,12 @@ export interface UseUsageDataReturn {
   apiKeyAliases: ApiKeyAlias[];
   usageServiceAvailable: boolean;
   setModelPrices: (prices: Record<string, ModelPrice>) => Promise<void>;
+  loadModelPrices: () => Promise<void>;
   loadApiKeyAliases: () => Promise<void>;
   syncModelPrices: (models?: string[]) => Promise<ModelPriceSyncResponse>;
   exportUsage: () => Promise<UsageExportResponse>;
   importUsage: (file: File) => Promise<UsageImportResponse>;
-  loadUsage: () => Promise<void>;
+  loadUsage: (queryOverride?: UsageQuery) => Promise<void>;
 }
 
 const isUsagePageFallbackError = (error: unknown) => {
@@ -165,9 +171,32 @@ export function useUsageData(
     [managementKey, resolveUsageServiceBase]
   );
 
+  const loadModelPrices = useCallback(async () => {
+    const fallbackPrices = loadStoredModelPrices();
+    try {
+      const response = await getModelPricesFromApi();
+      const apiPrices = response.prices ?? {};
+      if (Object.keys(apiPrices).length > 0) {
+        setModelPricesState(apiPrices);
+        clearModelPrices();
+        return;
+      }
+      if (Object.keys(fallbackPrices).length > 0) {
+        const migrated = await saveModelPricesToApi(fallbackPrices);
+        setModelPricesState(migrated.prices ?? fallbackPrices);
+        clearModelPrices();
+        return;
+      }
+      setModelPricesState({});
+    } catch {
+      setModelPricesState(fallbackPrices);
+    }
+  }, [getModelPricesFromApi, saveModelPricesToApi]);
+
   const loadUsagePages = useCallback(
-    async (serviceBase: string): Promise<UsagePages | null> => {
+    async (serviceBase: string, queryOverride?: UsageQuery): Promise<UsagePages | null> => {
       if (!usagePageQueries) return null;
+      const activeUsageQuery = queryOverride ?? usageQuery;
       try {
         const [accounts, apiKeys, realtime] = await Promise.all([
           usagePageQueries.accounts
@@ -175,7 +204,7 @@ export function useUsageData(
                 serviceBase,
                 managementKey,
                 'accounts',
-                usageQuery,
+                activeUsageQuery,
                 usagePageQueries.accounts
               )
             : Promise.resolve(undefined),
@@ -184,7 +213,7 @@ export function useUsageData(
                 serviceBase,
                 managementKey,
                 'api-keys',
-                usageQuery,
+                activeUsageQuery,
                 usagePageQueries.apiKeys
               )
             : Promise.resolve(undefined),
@@ -193,7 +222,7 @@ export function useUsageData(
                 serviceBase,
                 managementKey,
                 'realtime',
-                usageQuery,
+                activeUsageQuery,
                 usagePageQueries.realtime
               )
             : Promise.resolve(undefined),
@@ -220,28 +249,6 @@ export function useUsageData(
     ]
   );
 
-  const loadModelPricesFromStorage = useCallback(async () => {
-    const fallbackPrices = loadModelPrices();
-    try {
-      const response = await getModelPricesFromApi();
-      const apiPrices = response.prices ?? {};
-      if (Object.keys(apiPrices).length > 0) {
-        setModelPricesState(apiPrices);
-        clearModelPrices();
-        return;
-      }
-      if (Object.keys(fallbackPrices).length > 0) {
-        const migrated = await saveModelPricesToApi(fallbackPrices);
-        setModelPricesState(migrated.prices ?? fallbackPrices);
-        clearModelPrices();
-        return;
-      }
-      setModelPricesState({});
-    } catch {
-      setModelPricesState(fallbackPrices);
-    }
-  }, [getModelPricesFromApi, saveModelPricesToApi]);
-
   const loadApiKeyAliases = useCallback(async () => {
     const requestId = aliasRequestIdRef.current + 1;
     aliasRequestIdRef.current = requestId;
@@ -255,7 +262,7 @@ export function useUsageData(
     }
   }, [getApiKeyAliasesFromApi]);
 
-  const loadUsage = useCallback(async () => {
+  const loadUsage = useCallback(async (queryOverride?: UsageQuery) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setLoading(true);
@@ -271,9 +278,10 @@ export function useUsageData(
         return;
       }
       setUsageServiceAvailable(true);
+      const activeUsageQuery = queryOverride ?? usageQuery;
       const [payload, pages] = await Promise.all([
-        usageServiceApi.getUsage(serviceBase, managementKey, usageQuery),
-        loadUsagePages(serviceBase),
+        usageServiceApi.getUsage(serviceBase, managementKey, activeUsageQuery),
+        loadUsagePages(serviceBase, activeUsageQuery),
       ]);
       if (requestIdRef.current !== requestId) return;
       setUsage(payload ?? null);
@@ -304,10 +312,10 @@ export function useUsageData(
   ]);
 
   useEffect(() => {
-    void loadModelPricesFromStorage();
+    void loadModelPrices();
     void loadApiKeyAliases();
     void loadUsage();
-  }, [loadApiKeyAliases, loadModelPricesFromStorage, loadUsage]);
+  }, [loadApiKeyAliases, loadModelPrices, loadUsage]);
 
   const setModelPrices = useCallback(
     async (prices: Record<string, ModelPrice>) => {
@@ -343,6 +351,7 @@ export function useUsageData(
     apiKeyAliases,
     usageServiceAvailable,
     setModelPrices,
+    loadModelPrices,
     loadApiKeyAliases,
     syncModelPrices,
     exportUsage: exportUsageFromApi,

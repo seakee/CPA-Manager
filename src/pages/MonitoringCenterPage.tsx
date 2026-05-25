@@ -1975,8 +1975,8 @@ export function MonitoringCenterPage() {
     return '';
   }, [customDraftEndMs, customDraftStartMs, t]);
 
-  const usageQuery = useMemo(() => {
-    const bounds = getRangeBounds(timeRange, Date.now(), customTimeRange);
+  const buildUsageQuery = useCallback((nowMs: number) => {
+    const bounds = getRangeBounds(timeRange, nowMs, customTimeRange);
     if (!bounds) return undefined;
     return {
       startMs: Number.isFinite(bounds.startMs) ? bounds.startMs : undefined,
@@ -2002,6 +2002,7 @@ export function MonitoringCenterPage() {
     selectedStatus,
     timeRange,
   ]);
+  const usageQuery = useMemo(() => buildUsageQuery(Date.now()), [buildUsageQuery]);
 
   const usagePageQueries = useMemo(
     () => ({
@@ -2042,6 +2043,7 @@ export function MonitoringCenterPage() {
     apiKeyAliases,
     usageServiceAvailable,
     setModelPrices,
+    loadModelPrices,
     loadApiKeyAliases,
     syncModelPrices,
     exportUsage,
@@ -2071,8 +2073,13 @@ export function MonitoringCenterPage() {
   });
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadUsage(), loadApiKeyAliases(), refreshMeta(false)]);
-  }, [loadApiKeyAliases, loadUsage, refreshMeta]);
+    await Promise.all([
+      loadUsage(buildUsageQuery(Date.now())),
+      loadModelPrices(),
+      loadApiKeyAliases(),
+      refreshMeta(false),
+    ]);
+  }, [buildUsageQuery, loadApiKeyAliases, loadModelPrices, loadUsage, refreshMeta]);
 
   const setCurrentAccountPage = useCallback(
     (page: number) => {
