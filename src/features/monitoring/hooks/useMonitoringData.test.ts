@@ -3,6 +3,7 @@ import {
   buildAccountRows,
   buildApiKeyRows,
   buildApiKeyDisplayMap,
+  buildMonitoringFilterFacetsFromSummary,
   buildRangeFilteredRows,
   buildMonitoringAuthMetaMap,
   type MonitoringEventRow,
@@ -45,7 +46,7 @@ const createMonitoringEventRow = (
   failureCalls: overrides.failureCalls ?? (overrides.failed ? 1 : 0),
   statsIncluded: overrides.statsIncluded ?? true,
   latencyMs: overrides.latencyMs ?? 1200,
-  latencySumMs: overrides.latencySumMs ?? (overrides.latencyMs ?? 1200),
+  latencySumMs: overrides.latencySumMs ?? overrides.latencyMs ?? 1200,
   latencyCount: overrides.latencyCount ?? 1,
   inputTokens: overrides.inputTokens ?? 10,
   outputTokens: overrides.outputTokens ?? 5,
@@ -214,5 +215,26 @@ describe('buildApiKeyDisplayMap', () => {
 
     expect(map.get(apiKeyHash)?.label).toContain('*');
     expect(map.get(apiKeyHash)?.label).not.toContain('ghp_1234567890abcdef');
+  });
+});
+
+describe('buildMonitoringFilterFacetsFromSummary', () => {
+  it('reads summary facets without requiring detail rows', () => {
+    const facets = buildMonitoringFilterFacetsFromSummary({
+      apis: {},
+      facets: {
+        providers: ['codex'],
+        accounts: [{ value: 'alice@example.com', label: 'Alice' }],
+        models: ['gpt-5'],
+        channels: ['codex'],
+        api_keys: [{ value: 'hash-a', label: 'Team A' }],
+      },
+    });
+
+    expect(facets.providers).toEqual(['codex']);
+    expect(facets.accounts).toEqual([{ value: 'alice@example.com', label: 'Alice' }]);
+    expect(facets.models).toEqual(['gpt-5']);
+    expect(facets.channels).toEqual(['codex']);
+    expect(facets.apiKeys).toEqual([{ value: 'hash-a', label: 'Team A' }]);
   });
 });

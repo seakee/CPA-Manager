@@ -297,6 +297,39 @@ func (s *Store) ensureUsageSearchIndex() error {
 		`create trigger if not exists api_key_aliases_fts_ad after delete on api_key_aliases begin
 			delete from api_key_aliases_fts where api_key_hash = old.api_key_hash;
 		end`,
+		`insert into api_key_aliases_fts (api_key_hash, alias)
+		select api_key_hash, alias from api_key_aliases
+		where not exists (
+			select 1 from api_key_aliases_fts where api_key_aliases_fts.api_key_hash = api_key_aliases.api_key_hash
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return s.backfillUsageEventsFTS()
+}
+
+func (s *Store) backfillUsageEventsFTS() error {
+	var eventCount, ftsCount int64
+	if err := s.db.QueryRow(`select count(*) from usage_events`).Scan(&eventCount); err != nil {
+		return err
+	}
+	if err := s.db.QueryRow(`select count(*) from usage_events_fts`).Scan(&ftsCount); err != nil {
+		return err
+	}
+	if ftsCount >= eventCount {
+		return nil
+	}
+
+	statements := []string{
+		`create temporary table if not exists usage_events_fts_existing_ids (
+			event_id integer primary key
+		)`,
+		`delete from usage_events_fts_existing_ids`,
+		`insert or ignore into usage_events_fts_existing_ids (event_id)
+			select event_id from usage_events_fts`,
 		`insert into usage_events_fts (
 			event_id, account_snapshot, auth_label_snapshot, auth_file_snapshot,
 			auth_provider_snapshot, auth_project_id_snapshot, auth_index, source,
@@ -311,14 +344,9 @@ func (s *Store) ensureUsageSearchIndex() error {
 			usage_events.requested_model, usage_events.resolved_model, usage_events.endpoint,
 			usage_events.method, usage_events.path
 		from usage_events
-		where not exists (
-			select 1 from usage_events_fts where usage_events_fts.event_id = usage_events.id
-		)`,
-		`insert into api_key_aliases_fts (api_key_hash, alias)
-		select api_key_hash, alias from api_key_aliases
-		where not exists (
-			select 1 from api_key_aliases_fts where api_key_aliases_fts.api_key_hash = api_key_aliases.api_key_hash
-		)`,
+		left join usage_events_fts_existing_ids on usage_events_fts_existing_ids.event_id = usage_events.id
+		where usage_events_fts_existing_ids.event_id is null`,
+		`delete from usage_events_fts_existing_ids`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -1047,6 +1075,11 @@ func (s *Store) usageSummary(ctx context.Context, filter UsageSummaryFilter, inc
 		summary.LatencyMS = &averageLatency
 	}
 	if !includeDetails {
+		facets, err := s.usageFacets(ctx, whereClause, args)
+		if err != nil {
+			return usage.Payload{}, err
+		}
+		summary.Facets = facets
 		return summary, nil
 	}
 
@@ -1157,6 +1190,129 @@ func (s *Store) usageSummary(ctx context.Context, filter UsageSummaryFilter, inc
 		return usage.Payload{}, err
 	}
 	return summary, nil
+}
+
+func (s *Store) usageFacets(ctx context.Context, whereClause string, args []any) (usage.Facets, error) {
+	providers, err := s.usageStringFacet(ctx, `coalesce(nullif(auth_provider_snapshot, ''), nullif(provider, ''))`, whereClause, args)
+	if err != nil {
+		return usage.Facets{}, err
+	}
+	models, err := s.usageStringFacet(ctx, `coalesce(nullif(resolved_model, ''), nullif(model, ''))`, whereClause, args)
+	if err != nil {
+		return usage.Facets{}, err
+	}
+	channels, err := s.usageStringFacet(ctx, `coalesce(nullif(auth_provider_snapshot, ''), nullif(provider, ''), nullif(source, ''))`, whereClause, args)
+	if err != nil {
+		return usage.Facets{}, err
+	}
+	accounts, err := s.usageAccountFacet(ctx, whereClause, args)
+	if err != nil {
+		return usage.Facets{}, err
+	}
+	apiKeys, err := s.usageAPIKeyFacet(ctx, whereClause, args)
+	if err != nil {
+		return usage.Facets{}, err
+	}
+	return usage.Facets{
+		Providers: providers,
+		Accounts:  accounts,
+		Models:    models,
+		Channels:  channels,
+		APIKeys:   apiKeys,
+	}, nil
+}
+
+func (s *Store) usageStringFacet(ctx context.Context, expression string, whereClause string, args []any) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `select value from (
+			select distinct `+expression+` as value from usage_events`+whereClause+`
+		)
+		where value is not null and trim(value) != ''
+		order by lower(value)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func (s *Store) usageAccountFacet(ctx context.Context, whereClause string, args []any) ([]usage.FacetOption, error) {
+	rows, err := s.db.QueryContext(ctx, `select
+		value,
+		coalesce(nullif(account_snapshot, ''), nullif(auth_label_snapshot, ''), value) as label
+		from (
+			select distinct
+				coalesce(nullif(account_snapshot, ''), nullif(auth_label_snapshot, ''), nullif(source, ''), nullif(auth_index, '')) as value,
+				account_snapshot,
+				auth_label_snapshot
+			from usage_events`+whereClause+`
+		)
+		where value is not null and trim(value) != ''
+		order by lower(label), lower(value)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	options := []usage.FacetOption{}
+	seen := map[string]struct{}{}
+	for rows.Next() {
+		var option usage.FacetOption
+		if err := rows.Scan(&option.Value, &option.Label); err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(option.Value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		options = append(options, option)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return options, nil
+}
+
+func (s *Store) usageAPIKeyFacet(ctx context.Context, whereClause string, args []any) ([]usage.FacetOption, error) {
+	rows, err := s.db.QueryContext(ctx, `select
+		keys.api_key_hash,
+		coalesce(nullif(api_key_aliases.alias, ''), keys.api_key_hash) as label
+		from (
+			select distinct lower(api_key_hash) as api_key_hash
+			from usage_events`+whereClause+`
+		) keys
+		left join api_key_aliases on lower(api_key_aliases.api_key_hash) = keys.api_key_hash
+		where keys.api_key_hash is not null and trim(keys.api_key_hash) != ''
+		order by lower(label), keys.api_key_hash`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	options := []usage.FacetOption{}
+	for rows.Next() {
+		var option usage.FacetOption
+		if err := rows.Scan(&option.Value, &option.Label); err != nil {
+			return nil, err
+		}
+		options = append(options, option)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return options, nil
 }
 
 func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind, filter UsageSummaryFilter, pageFilter UsagePageFilter) (UsagePage, error) {

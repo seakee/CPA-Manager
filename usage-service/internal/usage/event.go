@@ -85,6 +85,19 @@ type APIAggregate struct {
 	Models map[string]*ModelAggregate `json:"models"`
 }
 
+type FacetOption struct {
+	Value string `json:"value"`
+	Label string `json:"label,omitempty"`
+}
+
+type Facets struct {
+	Providers []string      `json:"providers,omitempty"`
+	Accounts  []FacetOption `json:"accounts,omitempty"`
+	Models    []string      `json:"models,omitempty"`
+	Channels  []string      `json:"channels,omitempty"`
+	APIKeys   []FacetOption `json:"api_keys,omitempty"`
+}
+
 type Payload struct {
 	TotalRequests int64                    `json:"total_requests"`
 	SuccessCount  int64                    `json:"success_count"`
@@ -95,6 +108,7 @@ type Payload struct {
 	LatencyMS     *int64                   `json:"latency_ms,omitempty"`
 	Tokens        Tokens                   `json:"tokens,omitempty"`
 	APIs          map[string]*APIAggregate `json:"apis"`
+	Facets        Facets                   `json:"facets,omitempty"`
 }
 
 var endpointPattern = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)`)

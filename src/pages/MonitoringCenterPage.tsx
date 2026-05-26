@@ -336,13 +336,6 @@ const buildAccountSecondaryText = (row: MonitoringAccountRow) => {
   return '';
 };
 
-const buildAccountOptionLabel = (row: MonitoringAccountRow) => {
-  if (!row.displayAccount || row.displayAccount === row.account) {
-    return row.account;
-  }
-  return `${row.displayAccount} / ${row.account}`;
-};
-
 const buildAccountSummaryMetrics = (
   row: MonitoringAccountRow,
   hasPrices: boolean,
@@ -1974,33 +1967,36 @@ export function MonitoringCenterPage() {
     return '';
   }, [customDraftEndMs, customDraftStartMs, t]);
 
-  const buildUsageQuery = useCallback((nowMs: number) => {
-    const bounds = getRangeBounds(timeRange, nowMs, customTimeRange);
-    if (!bounds) return undefined;
-    return {
-      startMs: Number.isFinite(bounds.startMs) ? bounds.startMs : undefined,
-      endMs: Number.isFinite(bounds.endMs) ? bounds.endMs : undefined,
-      account: selectedAccount !== 'all' ? selectedAccount : undefined,
-      provider: selectedProvider !== 'all' ? selectedProvider : undefined,
-      model: selectedModel !== 'all' ? selectedModel : undefined,
-      channel: selectedChannel !== 'all' ? selectedChannel : undefined,
-      apiKeyHash: selectedApiKeyHash !== 'all' ? selectedApiKeyHash : undefined,
-      status: selectedStatus !== 'all' ? selectedStatus : undefined,
-      search: deferredSearch.trim() || undefined,
-      searchApiKeyHash: deferredSearch.trim() ? deferredSearchApiKeyHash : undefined,
-    };
-  }, [
-    customTimeRange,
-    deferredSearch,
-    deferredSearchApiKeyHash,
-    selectedAccount,
-    selectedApiKeyHash,
-    selectedChannel,
-    selectedModel,
-    selectedProvider,
-    selectedStatus,
-    timeRange,
-  ]);
+  const buildUsageQuery = useCallback(
+    (nowMs: number) => {
+      const bounds = getRangeBounds(timeRange, nowMs, customTimeRange);
+      if (!bounds) return undefined;
+      return {
+        startMs: Number.isFinite(bounds.startMs) ? bounds.startMs : undefined,
+        endMs: Number.isFinite(bounds.endMs) ? bounds.endMs : undefined,
+        account: selectedAccount !== 'all' ? selectedAccount : undefined,
+        provider: selectedProvider !== 'all' ? selectedProvider : undefined,
+        model: selectedModel !== 'all' ? selectedModel : undefined,
+        channel: selectedChannel !== 'all' ? selectedChannel : undefined,
+        apiKeyHash: selectedApiKeyHash !== 'all' ? selectedApiKeyHash : undefined,
+        status: selectedStatus !== 'all' ? selectedStatus : undefined,
+        search: deferredSearch.trim() || undefined,
+        searchApiKeyHash: deferredSearch.trim() ? deferredSearchApiKeyHash : undefined,
+      };
+    },
+    [
+      customTimeRange,
+      deferredSearch,
+      deferredSearchApiKeyHash,
+      selectedAccount,
+      selectedApiKeyHash,
+      selectedChannel,
+      selectedModel,
+      selectedProvider,
+      selectedStatus,
+      timeRange,
+    ]
+  );
   const usageQuery = useMemo(() => buildUsageQuery(Date.now()), [buildUsageQuery]);
 
   const usagePageQueries = useMemo(
@@ -2062,6 +2058,7 @@ export function MonitoringCenterPage() {
     accountPageRows,
     apiKeyPageRows,
     realtimePageRows,
+    filterFacets,
     refreshMeta,
     summary: monitoringSummary,
   } = useMonitoringData({
@@ -2183,57 +2180,53 @@ export function MonitoringCenterPage() {
   const providerOptions = useMemo(
     () => [
       { value: 'all', label: t('monitoring.filter_all_providers') },
-      ...Array.from(new Set(filteredRows.map((row) => row.provider)))
+      ...Array.from(new Set(filterFacets.providers))
         .filter(Boolean)
         .sort((left, right) => left.localeCompare(right))
         .map((value) => ({ value, label: value })),
     ],
-    [filteredRows, t]
+    [filterFacets.providers, t]
   );
-
-  const accountOptionRows = useMemo(() => buildAccountRows(filteredRows), [filteredRows]);
 
   const accountOptions = useMemo(
     () => [
       { value: 'all', label: t('monitoring.filter_all_accounts') },
       ...Array.from(
-        new Map(
-          accountOptionRows.map((row) => [row.account, buildAccountOptionLabel(row)])
-        ).entries()
+        new Map(filterFacets.accounts.map((item) => [item.value, item.label])).entries()
       )
         .sort((left, right) => left[1].localeCompare(right[1]))
         .map(([value, label]) => ({ value, label })),
     ],
-    [accountOptionRows, t]
+    [filterFacets.accounts, t]
   );
 
   const modelOptions = useMemo(
     () => [
       { value: 'all', label: t('monitoring.filter_all_models') },
-      ...Array.from(new Set(filteredRows.map((row) => row.model)))
+      ...Array.from(new Set(filterFacets.models))
         .filter(Boolean)
         .sort((left, right) => left.localeCompare(right))
         .map((value) => ({ value, label: value })),
     ],
-    [filteredRows, t]
+    [filterFacets.models, t]
   );
 
   const channelOptions = useMemo(
     () => [
       { value: 'all', label: t('monitoring.filter_all_channels') },
-      ...Array.from(new Set(filteredRows.map((row) => row.channel)))
+      ...Array.from(new Set(filterFacets.channels))
         .filter(Boolean)
         .sort((left, right) => left.localeCompare(right))
         .map((value) => ({ value, label: value })),
     ],
-    [filteredRows, t]
+    [filterFacets.channels, t]
   );
 
   const apiKeyOptions = useMemo(() => {
     const optionMap = new Map<string, string>();
-    filteredRows.forEach((row) => {
-      if (!row.apiKeyHash || optionMap.has(row.apiKeyHash)) return;
-      optionMap.set(row.apiKeyHash, row.apiKeyLabel || row.apiKeyMasked || row.apiKeyHash);
+    filterFacets.apiKeys.forEach((item) => {
+      if (!item.value || optionMap.has(item.value)) return;
+      optionMap.set(item.value, item.label || item.value);
     });
 
     return [
@@ -2242,7 +2235,7 @@ export function MonitoringCenterPage() {
         .sort((left, right) => left[1].localeCompare(right[1]))
         .map(([value, label]) => ({ value, label })),
     ];
-  }, [filteredRows, t]);
+  }, [filterFacets.apiKeys, t]);
 
   const statusOptions = useMemo(
     () => [
@@ -2362,7 +2355,9 @@ export function MonitoringCenterPage() {
   );
   const displayedApiKeyRows = apiKeyPageRows ?? apiKeyRows;
   const apiKeyTotalCount =
-    apiKeyPageRows && usagePages?.apiKeys ? Math.max(0, usagePages.apiKeys.total_items) : apiKeyRows.length;
+    apiKeyPageRows && usagePages?.apiKeys
+      ? Math.max(0, usagePages.apiKeys.total_items)
+      : apiKeyRows.length;
   const realtimeLogRows = useMemo(
     () => buildRealtimeLogRows(realtimePageRows ?? scopedRows),
     [realtimePageRows, scopedRows]
@@ -2381,7 +2376,14 @@ export function MonitoringCenterPage() {
             usagePages.accounts.total_items
           )
         : buildPaginationState(sortedAccountRows, accountPage, accountPageSize),
-    [accountPage, accountPageRows, accountPageSize, displayedAccountRows, sortedAccountRows, usagePages?.accounts]
+    [
+      accountPage,
+      accountPageRows,
+      accountPageSize,
+      displayedAccountRows,
+      sortedAccountRows,
+      usagePages?.accounts,
+    ]
   );
   const apiKeyPagination = useMemo(
     () =>
@@ -2393,7 +2395,14 @@ export function MonitoringCenterPage() {
             usagePages.apiKeys.total_items
           )
         : buildPaginationState(apiKeyRows, apiKeyPage, apiKeyPageSize),
-    [apiKeyPage, apiKeyPageRows, apiKeyPageSize, apiKeyRows, displayedApiKeyRows, usagePages?.apiKeys]
+    [
+      apiKeyPage,
+      apiKeyPageRows,
+      apiKeyPageSize,
+      apiKeyRows,
+      displayedApiKeyRows,
+      usagePages?.apiKeys,
+    ]
   );
   const realtimePagination = useMemo(
     () =>

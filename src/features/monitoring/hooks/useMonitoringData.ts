@@ -124,6 +124,50 @@ const readFiniteNumber = (value: unknown) => {
   return Number.isFinite(numberValue) ? numberValue : 0;
 };
 
+const normalizeFacetStrings = (value: unknown) => {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map(readString).filter(Boolean))).sort((left, right) =>
+    left.localeCompare(right)
+  );
+};
+
+const normalizeFacetOptions = (
+  value: unknown,
+  displayMap?: Map<string, ApiKeyDisplayInfo>
+): MonitoringFilterOption[] => {
+  if (!Array.isArray(value)) return [];
+  const options = new Map<string, string>();
+  value.forEach((item) => {
+    const record = isRecord(item) ? item : null;
+    const rawValue = record ? record.value : item;
+    const optionValue = readString(rawValue);
+    if (!optionValue || options.has(optionValue)) return;
+    const display = displayMap?.get(optionValue.toLowerCase());
+    const fallbackLabel = record ? readString(record.label) : optionValue;
+    options.set(
+      optionValue,
+      sanitizeApiKeyDisplayText(display?.label || fallbackLabel || optionValue, optionValue)
+    );
+  });
+  return Array.from(options.entries())
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+};
+
+export const buildMonitoringFilterFacetsFromSummary = (
+  payload: unknown,
+  apiKeyDisplayMap?: Map<string, ApiKeyDisplayInfo>
+): MonitoringFilterFacets => {
+  const facets = isRecord(payload) && isRecord(payload.facets) ? payload.facets : {};
+  return {
+    providers: normalizeFacetStrings(facets.providers),
+    accounts: normalizeFacetOptions(facets.accounts),
+    models: normalizeFacetStrings(facets.models),
+    channels: normalizeFacetStrings(facets.channels),
+    apiKeys: normalizeFacetOptions(facets.api_keys ?? facets.apiKeys, apiKeyDisplayMap),
+  };
+};
+
 const extractArrayPayload = (payload: unknown, key: string): unknown[] => {
   if (Array.isArray(payload)) return payload;
   if (!isRecord(payload)) return [];
@@ -173,7 +217,7 @@ const sanitizeApiKeyDisplayText = (value: string, fallback = '') => {
   return maskSensitiveText(trimmed) || fallback;
 };
 
-type ApiKeyDisplayInfo = {
+export type ApiKeyDisplayInfo = {
   label: string;
   masked: string;
 };
@@ -488,6 +532,19 @@ export type MonitoringApiKeyRow = {
   models: MonitoringApiKeyModelSpendRow[];
 };
 
+export type MonitoringFilterOption = {
+  value: string;
+  label: string;
+};
+
+export type MonitoringFilterFacets = {
+  providers: string[];
+  accounts: MonitoringFilterOption[];
+  models: string[];
+  channels: string[];
+  apiKeys: MonitoringFilterOption[];
+};
+
 export type MonitoringRealtimeRow = {
   id: string;
   account: string;
@@ -563,6 +620,7 @@ export interface UseMonitoringDataReturn {
   accountPageRows: MonitoringAccountRow[] | null;
   apiKeyPageRows: MonitoringApiKeyRow[] | null;
   realtimePageRows: MonitoringEventRow[] | null;
+  filterFacets: MonitoringFilterFacets;
   refreshMeta: (showLoading?: boolean) => Promise<void>;
 }
 
@@ -1993,6 +2051,11 @@ export function useMonitoringData({
     return buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []);
   }, [apiKeyAliases, config?.apiKeys]);
 
+  const summaryFilterFacets = useMemo(
+    () => buildMonitoringFilterFacetsFromSummary(usage, apiKeyDisplayMap),
+    [apiKeyDisplayMap, usage]
+  );
+
   const modelPriceIndex = useMemo(() => buildModelPriceIndex(modelPrices), [modelPrices]);
 
   const buildRowsForUsage = useCallback(
@@ -2008,14 +2071,7 @@ export function useMonitoringData({
         apiKeyDisplayMap
       ).sort((left, right) => right.timestampMs - left.timestampMs);
     },
-    [
-      apiKeyDisplayMap,
-      authFileMap,
-      authMetaMap,
-      channelByAuthIndex,
-      modelPriceIndex,
-      sourceInfoMap,
-    ]
+    [apiKeyDisplayMap, authFileMap, authMetaMap, channelByAuthIndex, modelPriceIndex, sourceInfoMap]
   );
 
   const allRows = useMemo(() => {
@@ -2092,6 +2148,37 @@ export function useMonitoringData({
       buildRangeFilteredRows(allRows, timeRange, customTimeRange, searchQuery, searchApiKeyHash),
     [allRows, customTimeRange, searchApiKeyHash, searchQuery, timeRange]
   );
+  const filterFacets = useMemo<MonitoringFilterFacets>(() => {
+    if (
+      summaryFilterFacets.providers.length > 0 ||
+      summaryFilterFacets.accounts.length > 0 ||
+      summaryFilterFacets.models.length > 0 ||
+      summaryFilterFacets.channels.length > 0 ||
+      summaryFilterFacets.apiKeys.length > 0
+    ) {
+      return summaryFilterFacets;
+    }
+
+    const apiKeyOptions = new Map<string, string>();
+    filteredRows.forEach((row) => {
+      if (!row.apiKeyHash || apiKeyOptions.has(row.apiKeyHash)) return;
+      apiKeyOptions.set(row.apiKeyHash, row.apiKeyLabel || row.apiKeyMasked || row.apiKeyHash);
+    });
+
+    return {
+      providers: Array.from(new Set(filteredRows.map((row) => row.provider))).filter(Boolean),
+      accounts: buildAccountRows(filteredRows).map((row) => ({
+        value: row.account,
+        label:
+          row.displayAccount && row.displayAccount !== row.account
+            ? `${row.displayAccount} / ${row.account}`
+            : row.account,
+      })),
+      models: Array.from(new Set(filteredRows.map((row) => row.model))).filter(Boolean),
+      channels: Array.from(new Set(filteredRows.map((row) => row.channel))).filter(Boolean),
+      apiKeys: Array.from(apiKeyOptions.entries()).map(([value, label]) => ({ value, label })),
+    };
+  }, [filteredRows, summaryFilterFacets]);
   const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
 
   const summary = useMemo(
@@ -2152,6 +2239,7 @@ export function useMonitoringData({
     accountPageRows,
     apiKeyPageRows,
     realtimePageRows,
+    filterFacets,
     refreshMeta,
   };
 }

@@ -138,6 +138,8 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 		_ = db.Close()
 	})
 
+	hashA := strings.Repeat("a", 64)
+	hashB := strings.Repeat("b", 64)
 	_, err = db.InsertEvents(context.Background(), []usage.Event{
 		{
 			EventHash:            "summary-success",
@@ -146,7 +148,7 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 			Model:                "gpt-test",
 			Endpoint:             "POST /v1/chat/completions",
 			AuthIndex:            "auth-1",
-			APIKeyHash:           "key-hash-1",
+			APIKeyHash:           hashA,
 			AccountSnapshot:      "alice@example.com",
 			AuthProviderSnapshot: "codex",
 			InputTokens:          10,
@@ -163,7 +165,7 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 			Model:                "gpt-test",
 			Endpoint:             "POST /v1/chat/completions",
 			AuthIndex:            "auth-2",
-			APIKeyHash:           "key-hash-2",
+			APIKeyHash:           hashB,
 			AccountSnapshot:      "bob@example.com",
 			AuthProviderSnapshot: "gemini",
 			InputTokens:          5,
@@ -175,6 +177,11 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("insert events: %v", err)
+	}
+	if err := db.UpsertAPIKeyAliases(context.Background(), []APIKeyAlias{
+		{APIKeyHash: hashA, Alias: "Team Alpha"},
+	}, nil); err != nil {
+		t.Fatalf("upsert api key alias: %v", err)
 	}
 
 	summary, err := db.UsageSummary(context.Background(), UsageSummaryFilter{})
@@ -193,6 +200,23 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 	if len(summary.APIs) != 0 {
 		t.Fatalf("summary APIs len = %d, want no detail aggregates", len(summary.APIs))
 	}
+	if !stringSliceContains(summary.Facets.Providers, "codex") || !stringSliceContains(summary.Facets.Providers, "gemini") {
+		t.Fatalf("summary provider facets = %#v", summary.Facets.Providers)
+	}
+	if !stringSliceContains(summary.Facets.Models, "gpt-test") {
+		t.Fatalf("summary model facets = %#v", summary.Facets.Models)
+	}
+	if !stringSliceContains(summary.Facets.Channels, "codex") || !stringSliceContains(summary.Facets.Channels, "gemini") {
+		t.Fatalf("summary channel facets = %#v", summary.Facets.Channels)
+	}
+	if !facetOptionsContain(summary.Facets.Accounts, "alice@example.com", "alice@example.com") ||
+		!facetOptionsContain(summary.Facets.Accounts, "bob@example.com", "bob@example.com") {
+		t.Fatalf("summary account facets = %#v", summary.Facets.Accounts)
+	}
+	if !facetOptionsContain(summary.Facets.APIKeys, hashA, "Team Alpha") ||
+		!facetOptionsContain(summary.Facets.APIKeys, hashB, hashB) {
+		t.Fatalf("summary api key facets = %#v", summary.Facets.APIKeys)
+	}
 
 	startMS := int64(1_778_000_004_000)
 	filtered, err := db.UsageSummary(context.Background(), UsageSummaryFilter{StartMS: &startMS})
@@ -203,7 +227,7 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 		t.Fatalf("filtered summary = %#v", filtered)
 	}
 
-	apiKeyFiltered, err := db.UsageSummary(context.Background(), UsageSummaryFilter{APIKeyHash: "key-hash-1", Status: "success", Search: "alice"})
+	apiKeyFiltered, err := db.UsageSummary(context.Background(), UsageSummaryFilter{APIKeyHash: hashA, Status: "success", Search: "alice"})
 	if err != nil {
 		t.Fatalf("api key filtered usage summary: %v", err)
 	}
@@ -636,4 +660,22 @@ func TestStoreAPIKeyAliasesActiveHashesMigration(t *testing.T) {
 	}, []string{newHash, activeHash}); err == nil || err.Error() != "api key alias already exists" {
 		t.Fatalf("active conflict should be rejected, got err = %v", err)
 	}
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func facetOptionsContain(options []usage.FacetOption, value string, label string) bool {
+	for _, option := range options {
+		if option.Value == value && option.Label == label {
+			return true
+		}
+	}
+	return false
 }
