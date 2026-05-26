@@ -338,6 +338,24 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 	}
 }
 
+func TestUsageBreakdownPageRejectsUnsafePageFilters(t *testing.T) {
+	handler := newTestHandler(t, "http://example.test", true)
+	for _, path := range []string{
+		"/v0/management/usage/accounts?page=1&page_size=501",
+		"/v0/management/usage/accounts?page=1&page_size=1&sort_key=timestamp_ms%20desc",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer management-key")
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 func postUsageImport(t *testing.T, handler http.Handler, payload string) struct {
 	Format      string   `json:"format"`
 	Added       int      `json:"added"`

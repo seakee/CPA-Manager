@@ -275,6 +275,25 @@ func TestStoreUsageBreakdownPagePaginatesAccountGroups(t *testing.T) {
 	}
 }
 
+func TestNormalizeUsagePageFilterCapsPageSize(t *testing.T) {
+	page, pageSize := normalizeUsagePageFilter(UsagePageFilter{
+		Page:     0,
+		PageSize: MaxUsagePageSize + 1,
+	})
+	if page != 1 || pageSize != MaxUsagePageSize {
+		t.Fatalf("normalize page = %d, pageSize = %d", page, pageSize)
+	}
+}
+
+func TestNormalizeUsageSortKeyUsesWhitelist(t *testing.T) {
+	if got := normalizeUsageSortKey("totalTokens"); got != "totalTokens" {
+		t.Fatalf("valid sort key = %q", got)
+	}
+	if got := normalizeUsageSortKey("timestamp_ms desc"); got != defaultUsageSortKey {
+		t.Fatalf("invalid sort key = %q, want %q", got, defaultUsageSortKey)
+	}
+}
+
 func TestStoreUsageBreakdownPagePaginatesApiKeyGroups(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {

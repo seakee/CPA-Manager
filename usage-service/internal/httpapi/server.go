@@ -1008,9 +1008,15 @@ func parseUsagePageFilter(r *http.Request) (store.UsagePageFilter, error) {
 		if err != nil || value <= 0 {
 			return filter, fmt.Errorf("invalid page_size")
 		}
+		if value > store.MaxUsagePageSize {
+			return filter, fmt.Errorf("page_size must be less than or equal to %d", store.MaxUsagePageSize)
+		}
 		filter.PageSize = value
 	}
 	filter.SortKey = strings.TrimSpace(query.Get("sort_key"))
+	if filter.SortKey != "" && !store.IsUsageSortKey(filter.SortKey) {
+		return filter, fmt.Errorf("invalid sort_key")
+	}
 	filter.SortDirection = strings.TrimSpace(query.Get("sort_direction"))
 	if filter.SortDirection != "" && filter.SortDirection != "asc" && filter.SortDirection != "desc" {
 		return filter, fmt.Errorf("invalid sort_direction")

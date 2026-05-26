@@ -778,6 +778,23 @@ const (
 	UsageBreakdownModels   UsageBreakdownKind = "models"
 )
 
+const MaxUsagePageSize = 500
+
+const defaultUsageSortKey = "lastSeenAt"
+
+var usageSortKeys = map[string]struct{}{
+	"totalCalls":   {},
+	"successCalls": {},
+	"failureCalls": {},
+	"successRate":  {},
+	"totalTokens":  {},
+	"totalCost":    {},
+	"inputTokens":  {},
+	"outputTokens": {},
+	"cachedTokens": {},
+	"lastSeenAt":   {},
+}
+
 type UsagePageFilter struct {
 	Page          int
 	PageSize      int
@@ -1022,6 +1039,13 @@ func (s *Store) usageSummary(ctx context.Context, filter UsageSummaryFilter, inc
 
 func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind, filter UsageSummaryFilter, pageFilter UsagePageFilter) (UsagePage, error) {
 	page, pageSize := normalizeUsagePageFilter(pageFilter)
+	switch kind {
+	case UsageBreakdownRealtime:
+		return s.usageRealtimePage(ctx, filter, page, pageSize)
+	case UsageBreakdownModels:
+		return s.usageModelPage(ctx, filter, page, pageSize)
+	}
+
 	summary, err := s.usageSummary(ctx, filter, true)
 	if err != nil {
 		return UsagePage{}, err
@@ -1033,10 +1057,6 @@ func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind,
 		return buildGroupedUsagePage(details, page, pageSize, pageFilter, accountBreakdownKey), nil
 	case UsageBreakdownAPIKeys:
 		return buildGroupedUsagePage(details, page, pageSize, pageFilter, apiKeyBreakdownKey), nil
-	case UsageBreakdownRealtime:
-		return s.usageRealtimePage(ctx, filter, page, pageSize)
-	case UsageBreakdownModels:
-		return s.usageModelPage(ctx, filter, page, pageSize)
 	default:
 		return UsagePage{}, fmt.Errorf("unknown usage breakdown kind %q", kind)
 	}
@@ -1160,10 +1180,15 @@ func normalizeUsagePageFilter(filter UsagePageFilter) (int, int) {
 	if pageSize <= 0 {
 		pageSize = 20
 	}
-	if pageSize > 500 {
-		pageSize = 500
+	if pageSize > MaxUsagePageSize {
+		pageSize = MaxUsagePageSize
 	}
 	return page, pageSize
+}
+
+func IsUsageSortKey(sortKey string) bool {
+	_, ok := usageSortKeys[strings.TrimSpace(sortKey)]
+	return ok
 }
 
 func flattenUsagePayload(payload usage.Payload) []usageBreakdownDetail {
@@ -1269,17 +1294,14 @@ func sortBreakdownDetails(details []usageBreakdownDetail) {
 func sortBreakdownGroups(groups []*usageBreakdownGroup, filter UsagePageFilter) {
 	direction := strings.ToLower(strings.TrimSpace(filter.SortDirection))
 	ascending := direction == "asc"
-	sortKey := strings.TrimSpace(filter.SortKey)
-	if sortKey == "" {
-		sortKey = "lastSeenAt"
-	}
+	sortKey := normalizeUsageSortKey(filter.SortKey)
 
 	sort.SliceStable(groups, func(i, j int) bool {
 		left := groups[i]
 		right := groups[j]
 		compare := compareBreakdownGroup(left, right, sortKey)
 		if compare == 0 {
-			compare = compareBreakdownGroup(left, right, "lastSeenAt")
+			compare = compareBreakdownGroup(left, right, defaultUsageSortKey)
 		}
 		if compare == 0 {
 			compare = strings.Compare(left.Key, right.Key)
@@ -1289,6 +1311,14 @@ func sortBreakdownGroups(groups []*usageBreakdownGroup, filter UsagePageFilter) 
 		}
 		return compare > 0
 	})
+}
+
+func normalizeUsageSortKey(sortKey string) string {
+	sortKey = strings.TrimSpace(sortKey)
+	if IsUsageSortKey(sortKey) {
+		return sortKey
+	}
+	return defaultUsageSortKey
 }
 
 func compareBreakdownGroup(left *usageBreakdownGroup, right *usageBreakdownGroup, sortKey string) int {
