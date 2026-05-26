@@ -462,12 +462,8 @@ func TestStoreUsageBreakdownPagePaginatesAccountGroups(t *testing.T) {
 	if page.TotalItems != 3 || page.Page != 2 || page.PageSize != 1 {
 		t.Fatalf("pagination = %#v", page)
 	}
-	details := collectTestDetails(page.Usage)
-	if len(details) != 1 {
-		t.Fatalf("details len = %d, want 1", len(details))
-	}
-	if details[0].AccountSnapshot != "carol@example.com" {
-		t.Fatalf("account page detail account = %q, want carol", details[0].AccountSnapshot)
+	if details := collectTestDetails(page.Usage); len(details) != 0 {
+		t.Fatalf("account page usage details len = %d, want direct items only", len(details))
 	}
 	items, ok := page.Items.([]UsageBreakdownPageItem)
 	if !ok || len(items) != 1 || items[0].Account != "carol@example.com" || len(items[0].Models) != 1 {
@@ -511,8 +507,8 @@ func TestStoreUsageBreakdownPageHandlesLargerAccountDataset(t *testing.T) {
 	if page.TotalItems != 120 || page.Page != 5 || page.PageSize != 20 {
 		t.Fatalf("pagination = %#v", page)
 	}
-	if details := collectTestDetails(page.Usage); len(details) != 20 {
-		t.Fatalf("details len = %d, want 20", len(details))
+	if details := collectTestDetails(page.Usage); len(details) != 0 {
+		t.Fatalf("usage details len = %d, want direct items only", len(details))
 	}
 }
 
@@ -585,9 +581,12 @@ func TestStoreUsageBreakdownPageSortsAccountGroupsByTotalCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("usage account cost page: %v", err)
 	}
-	details := collectTestDetails(page.Usage)
-	if len(details) != 1 || details[0].AccountSnapshot != "high-cost@example.com" {
-		t.Fatalf("cost sorted details = %#v, want high-cost account first", details)
+	if details := collectTestDetails(page.Usage); len(details) != 0 {
+		t.Fatalf("usage details len = %d, want direct items only", len(details))
+	}
+	items, ok := page.Items.([]UsageBreakdownPageItem)
+	if !ok || len(items) != 1 || items[0].Account != "high-cost@example.com" {
+		t.Fatalf("cost sorted items = %#v, want high-cost account first", page.Items)
 	}
 }
 
@@ -634,9 +633,8 @@ func TestStoreUsageBreakdownPagePaginatesApiKeyGroups(t *testing.T) {
 	if page.TotalItems != 2 {
 		t.Fatalf("total items = %d, want 2", page.TotalItems)
 	}
-	details := collectTestDetails(page.Usage)
-	if len(details) != 1 || details[0].APIKeyHash != "key-b" {
-		t.Fatalf("api-key page details = %#v, want key-b", details)
+	if details := collectTestDetails(page.Usage); len(details) != 0 {
+		t.Fatalf("api-key page usage details len = %d, want direct items only", len(details))
 	}
 	items, ok := page.Items.([]UsageBreakdownPageItem)
 	if !ok || len(items) != 1 || items[0].APIKeyHash != "key-b" {
@@ -685,9 +683,8 @@ func TestStoreUsageBreakdownPagePaginatesRealtimeRows(t *testing.T) {
 	if page.TotalItems != 2 || page.Page != 2 {
 		t.Fatalf("pagination = %#v", page)
 	}
-	details := collectTestDetails(page.Usage)
-	if len(details) != 1 || details[0].Tokens.TotalTokens != 10 {
-		t.Fatalf("realtime page details = %#v, want oldest row", details)
+	if details := collectTestDetails(page.Usage); len(details) != 0 {
+		t.Fatalf("realtime page usage details len = %d, want direct items only", len(details))
 	}
 	items, ok := page.Items.([]usage.Event)
 	if !ok || len(items) != 1 || items[0].EventHash != "realtime-page-old" {

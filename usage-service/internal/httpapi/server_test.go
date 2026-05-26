@@ -338,6 +338,9 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 			if !strings.Contains(path, "/models") && (len(response.Items) == 0 || string(response.Items) == "null") {
 				t.Fatalf("missing direct page items: %#v", response)
 			}
+			if !strings.Contains(path, "/models") && strings.Contains(string(response.Usage), `"apis":{"`) {
+				t.Fatalf("non-model page should not return endpoint detail aggregates: %s", response.Usage)
+			}
 		})
 	}
 }

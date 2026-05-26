@@ -1522,7 +1522,7 @@ func (s *Store) usageRealtimePage(ctx context.Context, filter UsageSummaryFilter
 		Page:       page,
 		PageSize:   pageSize,
 		TotalItems: totalItems,
-		Usage:      usage.BuildPayload(events),
+		Usage:      payloadSummaryFromEvents(events),
 		Items:      events,
 	}, nil
 }
@@ -1631,7 +1631,7 @@ func buildGroupedUsagePage(
 		Page:       page,
 		PageSize:   pageSize,
 		TotalItems: int64(len(groups)),
-		Usage:      payloadFromBreakdownDetails(pageDetails),
+		Usage:      payloadSummaryFromBreakdownDetails(pageDetails),
 		Items:      buildBreakdownPageItems(kind, pageGroups),
 	}
 }
@@ -2027,6 +2027,58 @@ func payloadFromBreakdownDetails(details []usageBreakdownDetail) usage.Payload {
 			apiSummary.Models[item.Model] = modelSummary
 		}
 		modelSummary.Details = append(modelSummary.Details, detail)
+	}
+	if payload.LatencyCount > 0 {
+		averageLatency := payload.LatencySumMS / payload.LatencyCount
+		payload.LatencyMS = &averageLatency
+	}
+	return payload
+}
+
+func payloadSummaryFromBreakdownDetails(details []usageBreakdownDetail) usage.Payload {
+	payload := usage.Payload{APIs: map[string]*usage.APIAggregate{}}
+	for _, item := range details {
+		detail := item.Detail
+		payload.TotalRequests += detail.RequestCount
+		payload.SuccessCount += detail.SuccessCount
+		payload.FailureCount += detail.FailureCount
+		payload.Tokens.InputTokens += detail.Tokens.InputTokens
+		payload.Tokens.OutputTokens += detail.Tokens.OutputTokens
+		payload.Tokens.ReasoningTokens += detail.Tokens.ReasoningTokens
+		payload.Tokens.CachedTokens += detail.Tokens.CachedTokens
+		payload.Tokens.CacheTokens += detail.Tokens.CacheTokens
+		payload.Tokens.TotalTokens += detail.Tokens.TotalTokens
+		payload.TotalTokens += detail.Tokens.TotalTokens
+		payload.LatencySumMS += detail.LatencySumMS
+		payload.LatencyCount += detail.LatencyCount
+	}
+	if payload.LatencyCount > 0 {
+		averageLatency := payload.LatencySumMS / payload.LatencyCount
+		payload.LatencyMS = &averageLatency
+	}
+	return payload
+}
+
+func payloadSummaryFromEvents(events []usage.Event) usage.Payload {
+	payload := usage.Payload{APIs: map[string]*usage.APIAggregate{}}
+	for _, event := range events {
+		payload.TotalRequests++
+		if event.Failed {
+			payload.FailureCount++
+		} else {
+			payload.SuccessCount++
+		}
+		payload.TotalTokens += event.TotalTokens
+		payload.Tokens.InputTokens += event.InputTokens
+		payload.Tokens.OutputTokens += event.OutputTokens
+		payload.Tokens.ReasoningTokens += event.ReasoningTokens
+		payload.Tokens.CachedTokens += event.CachedTokens
+		payload.Tokens.CacheTokens += event.CacheTokens
+		payload.Tokens.TotalTokens += event.TotalTokens
+		if event.LatencyMS != nil {
+			payload.LatencySumMS += *event.LatencyMS
+			payload.LatencyCount++
+		}
 	}
 	if payload.LatencyCount > 0 {
 		averageLatency := payload.LatencySumMS / payload.LatencyCount
