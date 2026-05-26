@@ -238,6 +238,85 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 	}
 }
 
+func TestStoreUsageSummaryFacetsIgnoreSelectedDimensionFilters(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	hashA := strings.Repeat("a", 64)
+	hashB := strings.Repeat("b", 64)
+	_, err = db.InsertEvents(context.Background(), []usage.Event{
+		{
+			EventHash:            "facet-filter-a",
+			TimestampMS:          1_778_000_001_000,
+			Timestamp:            "2026-05-06T00:00:01Z",
+			Provider:             "codex",
+			Model:                "gpt-a",
+			Endpoint:             "POST /v1/chat/completions",
+			Source:               "codex",
+			AuthIndex:            "auth-a",
+			APIKeyHash:           hashA,
+			AccountSnapshot:      "alice@example.com",
+			AuthProviderSnapshot: "codex",
+			TotalTokens:          10,
+		},
+		{
+			EventHash:            "facet-filter-b",
+			TimestampMS:          1_778_000_002_000,
+			Timestamp:            "2026-05-06T00:00:02Z",
+			Provider:             "gemini",
+			Model:                "gpt-b",
+			Endpoint:             "POST /v1/chat/completions",
+			Source:               "gemini",
+			AuthIndex:            "auth-b",
+			APIKeyHash:           hashB,
+			AccountSnapshot:      "bob@example.com",
+			AuthProviderSnapshot: "gemini",
+			TotalTokens:          20,
+			Failed:               true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	summary, err := db.UsageSummary(context.Background(), UsageSummaryFilter{
+		Account:    "alice@example.com",
+		Provider:   "codex",
+		Model:      "gpt-a",
+		Channel:    "codex",
+		APIKeyHash: hashA,
+		Status:     "success",
+	})
+	if err != nil {
+		t.Fatalf("filtered usage summary: %v", err)
+	}
+	if summary.TotalRequests != 1 || summary.TotalTokens != 10 {
+		t.Fatalf("filtered summary totals = %#v", summary)
+	}
+	if !stringSliceContains(summary.Facets.Providers, "codex") || !stringSliceContains(summary.Facets.Providers, "gemini") {
+		t.Fatalf("provider facets = %#v, want selected and unselected providers", summary.Facets.Providers)
+	}
+	if !stringSliceContains(summary.Facets.Models, "gpt-a") || !stringSliceContains(summary.Facets.Models, "gpt-b") {
+		t.Fatalf("model facets = %#v, want selected and unselected models", summary.Facets.Models)
+	}
+	if !stringSliceContains(summary.Facets.Channels, "codex") || !stringSliceContains(summary.Facets.Channels, "gemini") {
+		t.Fatalf("channel facets = %#v, want selected and unselected channels", summary.Facets.Channels)
+	}
+	if !facetOptionsContain(summary.Facets.Accounts, "alice@example.com", "alice@example.com") ||
+		!facetOptionsContain(summary.Facets.Accounts, "bob@example.com", "bob@example.com") {
+		t.Fatalf("account facets = %#v, want selected and unselected accounts", summary.Facets.Accounts)
+	}
+	if !facetOptionsContain(summary.Facets.APIKeys, hashA, hashA) ||
+		!facetOptionsContain(summary.Facets.APIKeys, hashB, hashB) {
+		t.Fatalf("api key facets = %#v, want selected and unselected keys", summary.Facets.APIKeys)
+	}
+}
+
 func TestStoreUsageSearchUsesFTSAndAPIKeyAlias(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {

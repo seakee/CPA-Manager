@@ -1008,6 +1008,15 @@ func (filter UsageSummaryFilter) whereClause() (string, []any) {
 	return " where " + strings.Join(clauses, " and "), args
 }
 
+func (filter UsageSummaryFilter) facetFilter() UsageSummaryFilter {
+	return UsageSummaryFilter{
+		StartMS:          filter.StartMS,
+		EndMS:            filter.EndMS,
+		Search:           filter.Search,
+		SearchAPIKeyHash: filter.SearchAPIKeyHash,
+	}
+}
+
 func (filter UsageSummaryFilter) searchClause() (string, []any) {
 	searchQuery := buildFTSQuery(filter.Search)
 	apiKeyHash := strings.ToLower(strings.TrimSpace(filter.SearchAPIKeyHash))
@@ -1090,7 +1099,8 @@ func (s *Store) usageSummary(ctx context.Context, filter UsageSummaryFilter, inc
 		summary.LatencyMS = &averageLatency
 	}
 	if !includeDetails {
-		facets, err := s.usageFacets(ctx, whereClause, args)
+		facetWhereClause, facetArgs := filter.facetFilter().whereClause()
+		facets, err := s.usageFacets(ctx, facetWhereClause, facetArgs)
 		if err != nil {
 			return usage.Payload{}, err
 		}
