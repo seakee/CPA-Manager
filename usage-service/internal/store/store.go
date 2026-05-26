@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -898,6 +899,9 @@ const (
 const MaxUsagePageSize = 500
 
 const defaultUsageSortKey = "lastSeenAt"
+const usageTokensPerPriceUnit = 1_000_000
+
+var usageModelDateSuffixRegex = regexp.MustCompile(`-\d{6,8}$`)
 
 var usageSortKeys = map[string]struct{}{
 	"totalCalls":   {},
@@ -943,7 +947,14 @@ type usageBreakdownGroup struct {
 	OutputTokens    int64
 	CachedTokens    int64
 	TotalTokens     int64
+	TotalCost       float64
 	LatestTimestamp int64
+}
+
+type usageModelPriceIndex struct {
+	exact        map[string]string
+	base         map[string]string
+	dateStripped map[string]string
 }
 
 func (filter UsageSummaryFilter) whereClause() (string, []any) {
@@ -1334,11 +1345,20 @@ func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind,
 	}
 
 	details := flattenUsagePayload(summary)
+	var prices map[string]ModelPrice
+	var priceIndex *usageModelPriceIndex
+	if normalizeUsageSortKey(pageFilter.SortKey) == "totalCost" {
+		prices, err = s.LoadModelPrices(ctx)
+		if err != nil {
+			return UsagePage{}, err
+		}
+		priceIndex = buildUsageModelPriceIndex(prices)
+	}
 	switch kind {
 	case UsageBreakdownAccounts:
-		return buildGroupedUsagePage(details, page, pageSize, pageFilter, accountBreakdownKey), nil
+		return buildGroupedUsagePage(details, page, pageSize, pageFilter, accountBreakdownKey, prices, priceIndex), nil
 	case UsageBreakdownAPIKeys:
-		return buildGroupedUsagePage(details, page, pageSize, pageFilter, apiKeyBreakdownKey), nil
+		return buildGroupedUsagePage(details, page, pageSize, pageFilter, apiKeyBreakdownKey, prices, priceIndex), nil
 	default:
 		return UsagePage{}, fmt.Errorf("unknown usage breakdown kind %q", kind)
 	}
@@ -1507,7 +1527,15 @@ func usageDetailTimestampMS(detail usage.Detail) int64 {
 	return parsed.UnixMilli()
 }
 
-func buildGroupedUsagePage(details []usageBreakdownDetail, page int, pageSize int, pageFilter UsagePageFilter, keyFunc func(usage.Detail) string) UsagePage {
+func buildGroupedUsagePage(
+	details []usageBreakdownDetail,
+	page int,
+	pageSize int,
+	pageFilter UsagePageFilter,
+	keyFunc func(usage.Detail) string,
+	prices map[string]ModelPrice,
+	priceIndex *usageModelPriceIndex,
+) UsagePage {
 	groupMap := make(map[string]*usageBreakdownGroup)
 	for _, item := range details {
 		key := keyFunc(item.Detail)
@@ -1524,6 +1552,7 @@ func buildGroupedUsagePage(details []usageBreakdownDetail, page int, pageSize in
 		group.OutputTokens += item.Detail.Tokens.OutputTokens
 		group.CachedTokens += maxInt64(item.Detail.Tokens.CachedTokens, item.Detail.Tokens.CacheTokens)
 		group.TotalTokens += item.Detail.Tokens.TotalTokens
+		group.TotalCost += usageDetailCost(item, prices, priceIndex)
 		if item.TimestampMS > group.LatestTimestamp {
 			group.LatestTimestamp = item.TimestampMS
 		}
@@ -1613,8 +1642,10 @@ func compareBreakdownGroup(left *usageBreakdownGroup, right *usageBreakdownGroup
 		return compareInt64(left.FailureCalls, right.FailureCalls)
 	case "successRate":
 		return compareFloat64(successRate(left), successRate(right))
-	case "totalTokens", "totalCost":
+	case "totalTokens":
 		return compareInt64(left.TotalTokens, right.TotalTokens)
+	case "totalCost":
+		return compareFloat64(left.TotalCost, right.TotalCost)
 	case "inputTokens":
 		return compareInt64(left.InputTokens, right.InputTokens)
 	case "outputTokens":
@@ -1626,6 +1657,108 @@ func compareBreakdownGroup(left *usageBreakdownGroup, right *usageBreakdownGroup
 	default:
 		return compareInt64(left.LatestTimestamp, right.LatestTimestamp)
 	}
+}
+
+func usageDetailCost(item usageBreakdownDetail, prices map[string]ModelPrice, priceIndex *usageModelPriceIndex) float64 {
+	if len(prices) == 0 || priceIndex == nil {
+		return 0
+	}
+	price, ok := lookupUsageModelPrice(priceIndex, prices, item.Detail.ResolvedModel)
+	if !ok {
+		price, ok = lookupUsageModelPrice(priceIndex, prices, item.Model)
+	}
+	if !ok {
+		return 0
+	}
+	inputTokens := maxInt64(item.Detail.Tokens.InputTokens, 0)
+	cachedTokens := maxInt64(item.Detail.Tokens.CachedTokens, item.Detail.Tokens.CacheTokens)
+	cachedTokens = maxInt64(cachedTokens, 0)
+	promptTokens := maxInt64(inputTokens-cachedTokens, 0)
+	outputTokens := maxInt64(item.Detail.Tokens.OutputTokens, 0)
+	total := (float64(promptTokens) / usageTokensPerPriceUnit * price.Prompt) +
+		(float64(cachedTokens) / usageTokensPerPriceUnit * price.Cache) +
+		(float64(outputTokens) / usageTokensPerPriceUnit * price.Completion)
+	if math.IsNaN(total) || math.IsInf(total, 0) || total <= 0 {
+		return 0
+	}
+	return total
+}
+
+func buildUsageModelPriceIndex(prices map[string]ModelPrice) *usageModelPriceIndex {
+	idx := &usageModelPriceIndex{
+		exact:        make(map[string]string, len(prices)),
+		base:         make(map[string]string),
+		dateStripped: make(map[string]string),
+	}
+	for key := range prices {
+		lower := strings.ToLower(key)
+		setShortestUsageModelPriceKey(idx.exact, lower, key)
+		baseName := usageLastPathSegment(lower)
+		setShortestUsageModelPriceKey(idx.base, baseName, key)
+		stripped := usageStripModelDateSuffix(baseName)
+		if stripped != baseName {
+			setShortestUsageModelPriceKey(idx.dateStripped, stripped, key)
+		}
+	}
+	return idx
+}
+
+func lookupUsageModelPrice(idx *usageModelPriceIndex, prices map[string]ModelPrice, model string) (ModelPrice, bool) {
+	if price, ok := prices[model]; ok {
+		return price, true
+	}
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if lower == "" {
+		return ModelPrice{}, false
+	}
+	if key, ok := idx.exact[lower]; ok {
+		if price, ok := prices[key]; ok {
+			return price, true
+		}
+	}
+	baseName := usageLastPathSegment(lower)
+	if key, ok := idx.base[baseName]; ok {
+		if price, ok := prices[key]; ok {
+			return price, true
+		}
+	}
+	stripped := usageStripModelDateSuffix(baseName)
+	if stripped != baseName {
+		if key, ok := idx.base[stripped]; ok {
+			if price, ok := prices[key]; ok {
+				return price, true
+			}
+		}
+		if key, ok := idx.dateStripped[stripped]; ok {
+			if price, ok := prices[key]; ok {
+				return price, true
+			}
+		}
+	}
+	if key, ok := idx.dateStripped[baseName]; ok {
+		if price, ok := prices[key]; ok {
+			return price, true
+		}
+	}
+	return ModelPrice{}, false
+}
+
+func setShortestUsageModelPriceKey(target map[string]string, key string, candidate string) {
+	if existing, ok := target[key]; !ok || len(candidate) < len(existing) {
+		target[key] = candidate
+	}
+}
+
+func usageLastPathSegment(value string) string {
+	idx := strings.LastIndex(value, "/")
+	if idx < 0 {
+		return value
+	}
+	return value[idx+1:]
+}
+
+func usageStripModelDateSuffix(value string) string {
+	return usageModelDateSuffixRegex.ReplaceAllString(value, "")
 }
 
 func successRate(group *usageBreakdownGroup) float64 {
@@ -1669,11 +1802,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func sliceBreakdownDetails(details []usageBreakdownDetail, page int, pageSize int) []usageBreakdownDetail {
-	start, end := pageBounds(len(details), page, pageSize)
-	return details[start:end]
 }
 
 func pageBounds(length int, page int, pageSize int) (int, int) {

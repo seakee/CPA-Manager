@@ -452,6 +452,62 @@ func TestNormalizeUsageSortKeyUsesWhitelist(t *testing.T) {
 	}
 }
 
+func TestStoreUsageBreakdownPageSortsAccountGroupsByTotalCost(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	if err := db.SaveModelPrices(context.Background(), map[string]ModelPrice{
+		"expensive-model": {Prompt: 100},
+		"cheap-model":     {Prompt: 1},
+	}); err != nil {
+		t.Fatalf("save model prices: %v", err)
+	}
+	_, err = db.InsertEvents(context.Background(), []usage.Event{
+		{
+			EventHash:       "cost-sort-expensive",
+			TimestampMS:     1_778_000_001_000,
+			Timestamp:       "2026-05-06T00:00:01Z",
+			Model:           "expensive-model",
+			Endpoint:        "POST /v1/chat/completions",
+			AccountSnapshot: "high-cost@example.com",
+			InputTokens:     10,
+			TotalTokens:     10,
+		},
+		{
+			EventHash:       "cost-sort-cheap",
+			TimestampMS:     1_778_000_002_000,
+			Timestamp:       "2026-05-06T00:00:02Z",
+			Model:           "cheap-model",
+			Endpoint:        "POST /v1/chat/completions",
+			AccountSnapshot: "high-token@example.com",
+			InputTokens:     100,
+			TotalTokens:     100,
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	page, err := db.UsageBreakdownPage(context.Background(), UsageBreakdownAccounts, UsageSummaryFilter{}, UsagePageFilter{
+		Page:          1,
+		PageSize:      1,
+		SortKey:       "totalCost",
+		SortDirection: "desc",
+	})
+	if err != nil {
+		t.Fatalf("usage account cost page: %v", err)
+	}
+	details := collectTestDetails(page.Usage)
+	if len(details) != 1 || details[0].AccountSnapshot != "high-cost@example.com" {
+		t.Fatalf("cost sorted details = %#v, want high-cost account first", details)
+	}
+}
+
 func TestStoreUsageBreakdownPagePaginatesApiKeyGroups(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {
