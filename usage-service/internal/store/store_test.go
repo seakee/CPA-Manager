@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
@@ -208,6 +209,70 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 	}
 	if apiKeyFiltered.TotalRequests != 1 || apiKeyFiltered.SuccessCount != 1 || apiKeyFiltered.FailureCount != 0 || apiKeyFiltered.TotalTokens != 30 {
 		t.Fatalf("api key filtered summary = %#v", apiKeyFiltered)
+	}
+}
+
+func TestStoreUsageSearchUsesFTSAndAPIKeyAlias(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	hashA := strings.Repeat("a", 64)
+	hashB := strings.Repeat("b", 64)
+	_, err = db.InsertEvents(context.Background(), []usage.Event{
+		{
+			EventHash:       "search-alias-a",
+			TimestampMS:     1_778_000_001_000,
+			Timestamp:       "2026-05-06T00:00:01Z",
+			Model:           "gpt-test",
+			Endpoint:        "POST /v1/chat/completions",
+			APIKeyHash:      hashA,
+			AccountSnapshot: "alice@example.com",
+			TotalTokens:     10,
+		},
+		{
+			EventHash:       "search-alias-b",
+			TimestampMS:     1_778_000_002_000,
+			Timestamp:       "2026-05-06T00:00:02Z",
+			Model:           "gemini-test",
+			Endpoint:        "POST /v1/chat/completions",
+			APIKeyHash:      hashB,
+			AccountSnapshot: "bob@example.com",
+			TotalTokens:     20,
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+	if err := db.UpsertAPIKeyAliases(context.Background(), []APIKeyAlias{
+		{APIKeyHash: hashA, Alias: "KongWenpeng"},
+	}, nil); err != nil {
+		t.Fatalf("upsert alias: %v", err)
+	}
+
+	summary, err := db.UsageSummary(context.Background(), UsageSummaryFilter{
+		Search:           "KongWenpeng",
+		SearchAPIKeyHash: strings.Repeat("f", 64),
+	})
+	if err != nil {
+		t.Fatalf("alias search summary: %v", err)
+	}
+	if summary.TotalRequests != 1 || summary.TotalTokens != 10 {
+		t.Fatalf("alias search summary = %#v", summary)
+	}
+
+	summary, err = db.UsageSummary(context.Background(), UsageSummaryFilter{
+		Search: "gemini-test",
+	})
+	if err != nil {
+		t.Fatalf("model search summary: %v", err)
+	}
+	if summary.TotalRequests != 1 || summary.TotalTokens != 20 {
+		t.Fatalf("model search summary = %#v", summary)
 	}
 }
 

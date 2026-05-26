@@ -689,12 +689,14 @@ export const buildRangeFilteredRows = (
       return false;
     }
 
-    if (normalizedSearchApiKeyHash && row.apiKeyHash !== normalizedSearchApiKeyHash) {
-      return false;
-    }
-
-    if (normalizedQuery && !row.searchText.includes(normalizedQuery)) {
-      return false;
+    if (normalizedQuery || normalizedSearchApiKeyHash) {
+      const matchesText = normalizedQuery ? row.searchText.includes(normalizedQuery) : false;
+      const matchesAPIKeyHash = normalizedSearchApiKeyHash
+        ? row.apiKeyHash === normalizedSearchApiKeyHash
+        : false;
+      if (!matchesText && !matchesAPIKeyHash) {
+        return false;
+      }
     }
 
     return true;

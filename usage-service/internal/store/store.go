@@ -188,6 +188,9 @@ func (s *Store) init() error {
 	if err := s.ensureUsageEventSnapshotColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureUsageSearchIndex(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -237,6 +240,88 @@ func (s *Store) ensureUsageEventSnapshotColumns() error {
 			column.name,
 			column.definition,
 		)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureUsageSearchIndex() error {
+	statements := []string{
+		`create virtual table if not exists usage_events_fts using fts5(
+			event_id unindexed,
+			account_snapshot,
+			auth_label_snapshot,
+			auth_file_snapshot,
+			auth_provider_snapshot,
+			auth_project_id_snapshot,
+			auth_index,
+			source,
+			api_key_hash,
+			provider,
+			model,
+			requested_model,
+			resolved_model,
+			endpoint,
+			method,
+			path,
+			tokenize='unicode61'
+		)`,
+		`create virtual table if not exists api_key_aliases_fts using fts5(
+			api_key_hash unindexed,
+			alias,
+			tokenize='unicode61'
+		)`,
+		`create trigger if not exists usage_events_fts_ai after insert on usage_events begin
+			insert into usage_events_fts (
+				event_id, account_snapshot, auth_label_snapshot, auth_file_snapshot,
+				auth_provider_snapshot, auth_project_id_snapshot, auth_index, source,
+				api_key_hash, provider, model, requested_model, resolved_model, endpoint,
+				method, path
+			) values (
+				new.id, new.account_snapshot, new.auth_label_snapshot, new.auth_file_snapshot,
+				new.auth_provider_snapshot, new.auth_project_id_snapshot, new.auth_index, new.source,
+				new.api_key_hash, new.provider, new.model, new.requested_model, new.resolved_model,
+				new.endpoint, new.method, new.path
+			);
+		end`,
+		`create trigger if not exists api_key_aliases_fts_ai after insert on api_key_aliases begin
+			insert into api_key_aliases_fts (api_key_hash, alias)
+			values (new.api_key_hash, new.alias);
+		end`,
+		`create trigger if not exists api_key_aliases_fts_au after update on api_key_aliases begin
+			delete from api_key_aliases_fts where api_key_hash = old.api_key_hash;
+			insert into api_key_aliases_fts (api_key_hash, alias)
+			values (new.api_key_hash, new.alias);
+		end`,
+		`create trigger if not exists api_key_aliases_fts_ad after delete on api_key_aliases begin
+			delete from api_key_aliases_fts where api_key_hash = old.api_key_hash;
+		end`,
+		`insert into usage_events_fts (
+			event_id, account_snapshot, auth_label_snapshot, auth_file_snapshot,
+			auth_provider_snapshot, auth_project_id_snapshot, auth_index, source,
+			api_key_hash, provider, model, requested_model, resolved_model, endpoint,
+			method, path
+		)
+		select
+			usage_events.id, usage_events.account_snapshot, usage_events.auth_label_snapshot,
+			usage_events.auth_file_snapshot, usage_events.auth_provider_snapshot,
+			usage_events.auth_project_id_snapshot, usage_events.auth_index, usage_events.source,
+			usage_events.api_key_hash, usage_events.provider, usage_events.model,
+			usage_events.requested_model, usage_events.resolved_model, usage_events.endpoint,
+			usage_events.method, usage_events.path
+		from usage_events
+		where not exists (
+			select 1 from usage_events_fts where usage_events_fts.event_id = usage_events.id
+		)`,
+		`insert into api_key_aliases_fts (api_key_hash, alias)
+		select api_key_hash, alias from api_key_aliases
+		where not exists (
+			select 1 from api_key_aliases_fts where api_key_aliases_fts.api_key_hash = api_key_aliases.api_key_hash
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.Exec(statement); err != nil {
 			return err
 		}
 	}
@@ -848,10 +933,6 @@ func (filter UsageSummaryFilter) whereClause() (string, []any) {
 		clauses = append(clauses, "lower(coalesce(api_key_hash, '')) = ?")
 		args = append(args, strings.ToLower(filter.APIKeyHash))
 	}
-	if filter.SearchAPIKeyHash != "" {
-		clauses = append(clauses, "lower(coalesce(api_key_hash, '')) = ?")
-		args = append(args, strings.ToLower(filter.SearchAPIKeyHash))
-	}
 	if filter.Status == "success" {
 		clauses = append(clauses, "failed = 0")
 	}
@@ -873,15 +954,56 @@ func (filter UsageSummaryFilter) whereClause() (string, []any) {
 		clauses = append(clauses, `(lower(coalesce(auth_provider_snapshot, '')) = ? or lower(coalesce(provider, '')) = ? or lower(coalesce(source, '')) = ?)`)
 		args = append(args, value, value, value)
 	}
-	if filter.Search != "" {
-		pattern := "%" + strings.ToLower(filter.Search) + "%"
-		clauses = append(clauses, `(lower(coalesce(account_snapshot, '') || ' ' || coalesce(auth_label_snapshot, '') || ' ' || coalesce(auth_file_snapshot, '') || ' ' || coalesce(auth_provider_snapshot, '') || ' ' || coalesce(auth_project_id_snapshot, '') || ' ' || coalesce(auth_index, '') || ' ' || coalesce(source, '') || ' ' || coalesce(api_key_hash, '') || ' ' || coalesce(model, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(endpoint, '') || ' ' || coalesce(method, '') || ' ' || coalesce(path, '')) like ?)`)
-		args = append(args, pattern)
+	searchClause, searchArgs := filter.searchClause()
+	if searchClause != "" {
+		clauses = append(clauses, searchClause)
+		args = append(args, searchArgs...)
 	}
 	if len(clauses) == 0 {
 		return "", args
 	}
 	return " where " + strings.Join(clauses, " and "), args
+}
+
+func (filter UsageSummaryFilter) searchClause() (string, []any) {
+	searchQuery := buildFTSQuery(filter.Search)
+	apiKeyHash := strings.ToLower(strings.TrimSpace(filter.SearchAPIKeyHash))
+	clauses := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if searchQuery != "" {
+		clauses = append(clauses, `id in (
+			select event_id from usage_events_fts where usage_events_fts match ?
+		)`)
+		args = append(args, searchQuery)
+		clauses = append(clauses, `api_key_hash in (
+			select api_key_hash from api_key_aliases_fts where api_key_aliases_fts match ?
+		)`)
+		args = append(args, searchQuery)
+	}
+	if apiKeyHash != "" {
+		clauses = append(clauses, "lower(coalesce(api_key_hash, '')) = ?")
+		args = append(args, apiKeyHash)
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return "(" + strings.Join(clauses, " or ") + ")", args
+}
+
+func buildFTSQuery(search string) string {
+	terms := strings.Fields(search)
+	if len(terms) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(terms))
+	for _, term := range terms {
+		term = strings.TrimSpace(term)
+		if term == "" {
+			continue
+		}
+		quoted = append(quoted, `"`+strings.ReplaceAll(term, `"`, `""`)+`"`)
+	}
+	return strings.Join(quoted, " AND ")
 }
 
 func (s *Store) UsageSummary(ctx context.Context, filter UsageSummaryFilter) (usage.Payload, error) {

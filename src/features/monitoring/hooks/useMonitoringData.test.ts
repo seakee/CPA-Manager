@@ -157,6 +157,22 @@ describe('buildRangeFilteredRows', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].apiKeyHash).toBe('hash-b');
   });
+
+  it('matches text search when the derived api key hash does not match', () => {
+    const rows = buildRangeFilteredRows(
+      [
+        createMonitoringEventRow({ apiKeyHash: 'hash-a', searchText: 'kongwenpeng codex' }),
+        createMonitoringEventRow({ id: 'row-2', apiKeyHash: 'hash-b', searchText: 'other alias' }),
+      ],
+      'all',
+      null,
+      'KongWenpeng',
+      sha256Hex('KongWenpeng')
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].apiKeyHash).toBe('hash-a');
+  });
 });
 
 describe('buildMonitoringAuthMetaMap', () => {
