@@ -585,9 +585,9 @@ export type MonitoringMetadata = {
 export interface UseMonitoringDataParams {
   usage: unknown;
   usagePages?: {
-    accounts?: { usage?: unknown } | null;
-    apiKeys?: { usage?: unknown } | null;
-    realtime?: { usage?: unknown } | null;
+    accounts?: { usage?: unknown; items?: unknown[] } | null;
+    apiKeys?: { usage?: unknown; items?: unknown[] } | null;
+    realtime?: { usage?: unknown; items?: unknown[] } | null;
     models?: { usage?: unknown } | null;
   } | null;
   config: Config | null | undefined;
@@ -1904,6 +1904,199 @@ const buildEventRows = (
     })
     .filter(Boolean) as MonitoringEventRow[];
 
+const readPageItems = (page: { items?: unknown[] } | null | undefined) =>
+  Array.isArray(page?.items) ? page.items.filter(isRecord) : [];
+
+const readPageNumber = (record: RecordLike, snakeKey: string, camelKey?: string) =>
+  readFiniteNumber(record[snakeKey] ?? (camelKey ? record[camelKey] : undefined));
+
+const buildModelSpendRowsFromPageItems = (
+  rawModels: unknown,
+  modelPriceIndex: ModelPriceIndex
+): MonitoringAccountModelSpendRow[] => {
+  if (!Array.isArray(rawModels)) return [];
+  return rawModels.filter(isRecord).map((model) => {
+    const modelName = readString(model.model) || '-';
+    const resolvedModel = readString(model.resolved_model ?? model.resolvedModel);
+    const tokens = {
+      input_tokens: readPageNumber(model, 'input_tokens', 'inputTokens'),
+      output_tokens: readPageNumber(model, 'output_tokens', 'outputTokens'),
+      reasoning_tokens: readPageNumber(model, 'reasoning_tokens', 'reasoningTokens'),
+      cached_tokens: readPageNumber(model, 'cached_tokens', 'cachedTokens'),
+      total_tokens: readPageNumber(model, 'total_tokens', 'totalTokens'),
+    };
+    const totalCalls = readPageNumber(model, 'total_requests', 'totalRequests');
+    const successCalls = readPageNumber(model, 'success_count', 'successCount');
+    const failureCalls = readPageNumber(model, 'failure_count', 'failureCount');
+    return {
+      model: modelName,
+      totalCalls,
+      successCalls,
+      failureCalls,
+      successRate: totalCalls > 0 ? successCalls / totalCalls : 1,
+      inputTokens: tokens.input_tokens,
+      outputTokens: tokens.output_tokens,
+      cachedTokens: tokens.cached_tokens,
+      totalTokens: tokens.total_tokens,
+      totalCost: calculateCost(
+        { tokens, __modelName: modelName, __resolvedModel: resolvedModel },
+        modelPriceIndex
+      ),
+      lastSeenAt: readPageNumber(model, 'last_seen_at_ms', 'lastSeenAtMs'),
+    };
+  });
+};
+
+const buildAccountRowsFromPageItems = (
+  items: RecordLike[],
+  modelPriceIndex: ModelPriceIndex
+): MonitoringAccountRow[] =>
+  items.map((item) => {
+    const account = readString(item.account ?? item.key ?? item.id) || '-';
+    const channels = normalizeFacetStrings(item.channels);
+    const models = buildModelSpendRowsFromPageItems(item.models, modelPriceIndex);
+    const totalCalls = readPageNumber(item, 'total_requests', 'totalRequests');
+    const successCalls = readPageNumber(item, 'success_count', 'successCount');
+    const failureCalls = readPageNumber(item, 'failure_count', 'failureCount');
+    const latencyCount = readPageNumber(item, 'latency_count', 'latencyCount');
+    const latencySum = readPageNumber(item, 'latency_sum_ms', 'latencySumMs');
+    const rawRecentPattern = item.recent_pattern ?? item.recentPattern;
+    const recentPattern = Array.isArray(rawRecentPattern)
+      ? rawRecentPattern
+          .map((value: unknown) => value === true)
+          .filter((_, index) => index < 10)
+      : [];
+    return {
+      id: account,
+      account,
+      displayAccount: resolveAccountDisplayName(
+        readString(item.account_label ?? item.accountLabel) || account,
+        channels
+      ),
+      accountMasked: maskEmailLike(account),
+      authLabels: normalizeFacetStrings(item.auth_labels ?? item.authLabels),
+      authIndices: normalizeFacetStrings(item.auth_indices ?? item.authIndices),
+      channels,
+      totalCalls,
+      successCalls,
+      failureCalls,
+      successRate: totalCalls > 0 ? successCalls / totalCalls : 1,
+      inputTokens: readPageNumber(item, 'input_tokens', 'inputTokens'),
+      outputTokens: readPageNumber(item, 'output_tokens', 'outputTokens'),
+      cachedTokens: readPageNumber(item, 'cached_tokens', 'cachedTokens'),
+      totalTokens: readPageNumber(item, 'total_tokens', 'totalTokens'),
+      totalCost: models.reduce((sum, model) => sum + model.totalCost, 0),
+      averageLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null,
+      lastSeenAt: readPageNumber(item, 'last_seen_at_ms', 'lastSeenAtMs'),
+      recentPattern,
+      models,
+    };
+  });
+
+const buildApiKeyRowsFromPageItems = (
+  items: RecordLike[],
+  modelPriceIndex: ModelPriceIndex,
+  apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>
+): MonitoringApiKeyRow[] =>
+  items.map((item) => {
+    const apiKeyHash = readString(
+      item.api_key_hash ?? item.apiKeyHash ?? item.key ?? item.id
+    ).toLowerCase();
+    const display = apiKeyDisplayMap.get(apiKeyHash);
+    const fallbackLabel =
+      readString(item.api_key_label ?? item.apiKeyLabel) || formatApiKeyHashLabel(apiKeyHash);
+    const apiKeyLabel = sanitizeApiKeyDisplayText(display?.label || fallbackLabel, fallbackLabel);
+    const apiKeyMasked = sanitizeApiKeyDisplayText(display?.masked || apiKeyLabel, apiKeyLabel);
+    const models = buildModelSpendRowsFromPageItems(item.models, modelPriceIndex);
+    const totalCalls = readPageNumber(item, 'total_requests', 'totalRequests');
+    const successCalls = readPageNumber(item, 'success_count', 'successCount');
+    const failureCalls = readPageNumber(item, 'failure_count', 'failureCount');
+    const latencyCount = readPageNumber(item, 'latency_count', 'latencyCount');
+    const latencySum = readPageNumber(item, 'latency_sum_ms', 'latencySumMs');
+    return {
+      id: apiKeyHash || readString(item.id) || '-',
+      apiKeyHash,
+      apiKeyLabel,
+      apiKeyMasked,
+      isUnknown: item.is_unknown === true || item.isUnknown === true,
+      authLabels: normalizeFacetStrings(item.auth_labels ?? item.authLabels),
+      sourceLabels: normalizeFacetStrings(item.source_labels ?? item.sourceLabels),
+      channels: normalizeFacetStrings(item.channels),
+      totalCalls,
+      successCalls,
+      failureCalls,
+      successRate: totalCalls > 0 ? successCalls / totalCalls : 1,
+      inputTokens: readPageNumber(item, 'input_tokens', 'inputTokens'),
+      outputTokens: readPageNumber(item, 'output_tokens', 'outputTokens'),
+      cachedTokens: readPageNumber(item, 'cached_tokens', 'cachedTokens'),
+      totalTokens: readPageNumber(item, 'total_tokens', 'totalTokens'),
+      totalCost: models.reduce((sum, model) => sum + model.totalCost, 0),
+      averageLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null,
+      lastSeenAt: readPageNumber(item, 'last_seen_at_ms', 'lastSeenAtMs'),
+      models,
+    };
+  });
+
+const buildRealtimeRowsFromPageItems = (
+  items: RecordLike[],
+  authMetaMap: Map<string, MonitoringAuthMeta>,
+  authFileMap: Map<string, CredentialInfo>,
+  sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
+  channelByAuthIndex: Map<string, MonitoringChannelMeta>,
+  modelPriceIndex: ModelPriceIndex,
+  apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>
+) => {
+  const details = items.map((item) => {
+    const endpoint = readString(item.endpoint) || '-';
+    const endpointMatch = endpoint.match(/^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)/i);
+    return {
+      timestamp: readString(item.timestamp),
+      source: readString(item.source),
+      auth_index: readString(item.auth_index ?? item.authIndex) || null,
+      api_key_hash: readString(item.api_key_hash ?? item.apiKeyHash),
+      account_snapshot: readString(item.account_snapshot ?? item.accountSnapshot),
+      auth_label_snapshot: readString(item.auth_label_snapshot ?? item.authLabelSnapshot),
+      auth_file_snapshot: readString(item.auth_file_snapshot ?? item.authFileSnapshot),
+      auth_provider_snapshot: readString(item.auth_provider_snapshot ?? item.authProviderSnapshot),
+      auth_project_id_snapshot: readString(
+        item.auth_project_id_snapshot ?? item.authProjectIdSnapshot
+      ),
+      auth_snapshot_at_ms: readPageNumber(item, 'auth_snapshot_at_ms', 'authSnapshotAtMs'),
+      latency_ms:
+        item.latency_ms !== undefined || item.latencyMs !== undefined
+          ? readPageNumber(item, 'latency_ms', 'latencyMs')
+          : undefined,
+      tokens: {
+        input_tokens: readPageNumber(item, 'input_tokens', 'inputTokens'),
+        output_tokens: readPageNumber(item, 'output_tokens', 'outputTokens'),
+        reasoning_tokens: readPageNumber(item, 'reasoning_tokens', 'reasoningTokens'),
+        cached_tokens: readPageNumber(item, 'cached_tokens', 'cachedTokens'),
+        cache_tokens: readPageNumber(item, 'cache_tokens', 'cacheTokens'),
+        total_tokens: readPageNumber(item, 'total_tokens', 'totalTokens'),
+      },
+      failed: item.failed === true,
+      request_count: 1,
+      success_count: item.failed === true ? 0 : 1,
+      failure_count: item.failed === true ? 1 : 0,
+      __modelName: readString(item.model) || '-',
+      __resolvedModel: readString(item.resolved_model ?? item.resolvedModel),
+      __endpoint: endpoint,
+      __endpointMethod: endpointMatch?.[1]?.toUpperCase(),
+      __endpointPath: readString(item.path) || endpointMatch?.[2] || endpoint,
+      __timestampMs: readPageNumber(item, 'timestamp_ms', 'timestampMs'),
+    } satisfies UsageDetailWithEndpoint;
+  });
+  return buildEventRows(
+    details,
+    authMetaMap,
+    authFileMap,
+    sourceInfoMap,
+    channelByAuthIndex,
+    modelPriceIndex,
+    apiKeyDisplayMap
+  ).sort((left, right) => right.timestampMs - left.timestampMs);
+};
+
 const loadMonitoringMetaPayload = async (
   config: Config | null | undefined
 ): Promise<MonitoringMetaPayload> => {
@@ -2079,6 +2272,8 @@ export function useMonitoringData({
   }, [buildRowsForUsage, usage]);
 
   const accountPageRows = useMemo(() => {
+    const items = readPageItems(usagePages?.accounts);
+    if (items.length > 0) return buildAccountRowsFromPageItems(items, modelPriceIndex);
     const pageUsage = usagePages?.accounts?.usage;
     if (!pageUsage) return null;
     const rows = buildRangeFilteredRows(
@@ -2092,13 +2287,18 @@ export function useMonitoringData({
   }, [
     buildRowsForUsage,
     customTimeRange,
+    modelPriceIndex,
     searchApiKeyHash,
     searchQuery,
     timeRange,
-    usagePages?.accounts?.usage,
+    usagePages?.accounts,
   ]);
 
   const apiKeyPageRows = useMemo(() => {
+    const items = readPageItems(usagePages?.apiKeys);
+    if (items.length > 0) {
+      return buildApiKeyRowsFromPageItems(items, modelPriceIndex, apiKeyDisplayMap);
+    }
     const pageUsage = usagePages?.apiKeys?.usage;
     if (!pageUsage) return null;
     const rows = buildRangeFilteredRows(
@@ -2110,15 +2310,29 @@ export function useMonitoringData({
     );
     return buildApiKeyRows(rows);
   }, [
+    apiKeyDisplayMap,
     buildRowsForUsage,
     customTimeRange,
+    modelPriceIndex,
     searchApiKeyHash,
     searchQuery,
     timeRange,
-    usagePages?.apiKeys?.usage,
+    usagePages?.apiKeys,
   ]);
 
   const realtimePageRows = useMemo(() => {
+    const items = readPageItems(usagePages?.realtime);
+    if (items.length > 0) {
+      return buildRealtimeRowsFromPageItems(
+        items,
+        authMetaMap,
+        authFileMap,
+        sourceInfoMap,
+        channelByAuthIndex,
+        modelPriceIndex,
+        apiKeyDisplayMap
+      );
+    }
     const pageUsage = usagePages?.realtime?.usage;
     if (!pageUsage) return null;
     return buildRangeFilteredRows(
@@ -2129,12 +2343,18 @@ export function useMonitoringData({
       searchApiKeyHash
     );
   }, [
+    apiKeyDisplayMap,
+    authFileMap,
+    authMetaMap,
     buildRowsForUsage,
+    channelByAuthIndex,
     customTimeRange,
+    modelPriceIndex,
     searchApiKeyHash,
     searchQuery,
+    sourceInfoMap,
     timeRange,
-    usagePages?.realtime?.usage,
+    usagePages?.realtime,
   ]);
 
   const modelAggregateRows = useMemo(() => {

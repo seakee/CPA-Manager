@@ -320,6 +320,7 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 				PageSize   int             `json:"page_size"`
 				TotalItems int64           `json:"total_items"`
 				Usage      json.RawMessage `json:"usage"`
+				Items      json.RawMessage `json:"items"`
 			}
 			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 				t.Fatalf("decode response: %v", err)
@@ -333,6 +334,9 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 			}
 			if len(response.Usage) == 0 || string(response.Usage) == "null" {
 				t.Fatalf("missing usage payload: %#v", response)
+			}
+			if !strings.Contains(path, "/models") && (len(response.Items) == 0 || string(response.Items) == "null") {
+				t.Fatalf("missing direct page items: %#v", response)
 			}
 		})
 	}

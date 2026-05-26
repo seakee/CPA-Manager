@@ -58,6 +58,7 @@ export interface UsagePageResponse {
   page_size: number;
   total_items: number;
   usage: UsagePayload;
+  items?: unknown[];
 }
 
 export interface UsageServiceInfo {

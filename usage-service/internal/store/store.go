@@ -928,6 +928,7 @@ type UsagePage struct {
 	PageSize   int           `json:"page_size"`
 	TotalItems int64         `json:"total_items"`
 	Usage      usage.Payload `json:"usage"`
+	Items      any           `json:"items,omitempty"`
 }
 
 type usageBreakdownDetail struct {
@@ -955,6 +956,48 @@ type usageModelPriceIndex struct {
 	exact        map[string]string
 	base         map[string]string
 	dateStripped map[string]string
+}
+
+type UsageBreakdownPageItem struct {
+	ID              string                    `json:"id"`
+	Key             string                    `json:"key"`
+	Account         string                    `json:"account,omitempty"`
+	AccountLabel    string                    `json:"account_label,omitempty"`
+	APIKeyHash      string                    `json:"api_key_hash,omitempty"`
+	APIKeyLabel     string                    `json:"api_key_label,omitempty"`
+	IsUnknown       bool                      `json:"is_unknown,omitempty"`
+	AuthLabels      []string                  `json:"auth_labels,omitempty"`
+	AuthIndices     []string                  `json:"auth_indices,omitempty"`
+	SourceLabels    []string                  `json:"source_labels,omitempty"`
+	Channels        []string                  `json:"channels,omitempty"`
+	TotalRequests   int64                     `json:"total_requests"`
+	SuccessCount    int64                     `json:"success_count"`
+	FailureCount    int64                     `json:"failure_count"`
+	InputTokens     int64                     `json:"input_tokens"`
+	OutputTokens    int64                     `json:"output_tokens"`
+	ReasoningTokens int64                     `json:"reasoning_tokens"`
+	CachedTokens    int64                     `json:"cached_tokens"`
+	TotalTokens     int64                     `json:"total_tokens"`
+	LatencySumMS    int64                     `json:"latency_sum_ms,omitempty"`
+	LatencyCount    int64                     `json:"latency_count,omitempty"`
+	LatencyMS       *int64                    `json:"latency_ms,omitempty"`
+	LastSeenAtMS    int64                     `json:"last_seen_at_ms"`
+	RecentPattern   []bool                    `json:"recent_pattern,omitempty"`
+	Models          []UsageBreakdownModelItem `json:"models,omitempty"`
+}
+
+type UsageBreakdownModelItem struct {
+	Model           string `json:"model"`
+	ResolvedModel   string `json:"resolved_model,omitempty"`
+	TotalRequests   int64  `json:"total_requests"`
+	SuccessCount    int64  `json:"success_count"`
+	FailureCount    int64  `json:"failure_count"`
+	InputTokens     int64  `json:"input_tokens"`
+	OutputTokens    int64  `json:"output_tokens"`
+	ReasoningTokens int64  `json:"reasoning_tokens"`
+	CachedTokens    int64  `json:"cached_tokens"`
+	TotalTokens     int64  `json:"total_tokens"`
+	LastSeenAtMS    int64  `json:"last_seen_at_ms"`
 }
 
 func (filter UsageSummaryFilter) whereClause() (string, []any) {
@@ -1366,9 +1409,9 @@ func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind,
 	}
 	switch kind {
 	case UsageBreakdownAccounts:
-		return buildGroupedUsagePage(details, page, pageSize, pageFilter, accountBreakdownKey, prices, priceIndex), nil
+		return buildGroupedUsagePage(kind, details, page, pageSize, pageFilter, accountBreakdownKey, prices, priceIndex), nil
 	case UsageBreakdownAPIKeys:
-		return buildGroupedUsagePage(details, page, pageSize, pageFilter, apiKeyBreakdownKey, prices, priceIndex), nil
+		return buildGroupedUsagePage(kind, details, page, pageSize, pageFilter, apiKeyBreakdownKey, prices, priceIndex), nil
 	default:
 		return UsagePage{}, fmt.Errorf("unknown usage breakdown kind %q", kind)
 	}
@@ -1480,6 +1523,7 @@ func (s *Store) usageRealtimePage(ctx context.Context, filter UsageSummaryFilter
 		PageSize:   pageSize,
 		TotalItems: totalItems,
 		Usage:      usage.BuildPayload(events),
+		Items:      events,
 	}, nil
 }
 
@@ -1538,6 +1582,7 @@ func usageDetailTimestampMS(detail usage.Detail) int64 {
 }
 
 func buildGroupedUsagePage(
+	kind UsageBreakdownKind,
 	details []usageBreakdownDetail,
 	page int,
 	pageSize int,
@@ -1577,7 +1622,8 @@ func buildGroupedUsagePage(
 
 	start, end := pageBounds(len(groups), page, pageSize)
 	pageDetails := make([]usageBreakdownDetail, 0)
-	for _, group := range groups[start:end] {
+	pageGroups := groups[start:end]
+	for _, group := range pageGroups {
 		pageDetails = append(pageDetails, group.Details...)
 	}
 
@@ -1586,7 +1632,134 @@ func buildGroupedUsagePage(
 		PageSize:   pageSize,
 		TotalItems: int64(len(groups)),
 		Usage:      payloadFromBreakdownDetails(pageDetails),
+		Items:      buildBreakdownPageItems(kind, pageGroups),
 	}
+}
+
+func buildBreakdownPageItems(kind UsageBreakdownKind, groups []*usageBreakdownGroup) []UsageBreakdownPageItem {
+	items := make([]UsageBreakdownPageItem, 0, len(groups))
+	for _, group := range groups {
+		item := UsageBreakdownPageItem{
+			ID:            group.Key,
+			Key:           group.Key,
+			TotalRequests: group.TotalCalls,
+			SuccessCount:  group.SuccessCalls,
+			FailureCount:  group.FailureCalls,
+			InputTokens:   group.InputTokens,
+			OutputTokens:  group.OutputTokens,
+			CachedTokens:  group.CachedTokens,
+			TotalTokens:   group.TotalTokens,
+			LastSeenAtMS:  group.LatestTimestamp,
+			RecentPattern: buildBreakdownRecentPattern(group.Details, 10),
+			Models:        buildBreakdownModelItems(group.Details),
+		}
+
+		for _, detail := range group.Details {
+			item.ReasoningTokens += detail.Detail.Tokens.ReasoningTokens
+			item.LatencySumMS += detail.Detail.LatencySumMS
+			item.LatencyCount += detail.Detail.LatencyCount
+			appendUniqueString(&item.AuthLabels, firstNonEmpty(detail.Detail.AuthLabelSnapshot, detail.Detail.AccountSnapshot))
+			appendUniqueString(&item.AuthIndices, detail.Detail.AuthIndex)
+			appendUniqueString(&item.Channels, firstNonEmpty(detail.Detail.AuthProviderSnapshot, detail.Detail.Source))
+			switch kind {
+			case UsageBreakdownAccounts:
+				if item.Account == "" {
+					item.Account = firstNonEmpty(detail.Detail.AccountSnapshot, detail.Detail.AuthLabelSnapshot, detail.Detail.Source, detail.Detail.AuthIndex, group.Key)
+					item.AccountLabel = firstNonEmpty(detail.Detail.AccountSnapshot, detail.Detail.AuthLabelSnapshot, item.Account)
+				}
+			case UsageBreakdownAPIKeys:
+				if item.APIKeyHash == "" && detail.Detail.APIKeyHash != "" {
+					item.APIKeyHash = strings.ToLower(detail.Detail.APIKeyHash)
+				}
+				appendUniqueString(&item.SourceLabels, firstNonEmpty(detail.Detail.AccountSnapshot, detail.Detail.AuthLabelSnapshot, detail.Detail.Source, detail.Detail.AuthIndex))
+			}
+		}
+		if item.Account == "" && kind == UsageBreakdownAccounts {
+			item.Account = group.Key
+			item.AccountLabel = group.Key
+		}
+		if kind == UsageBreakdownAPIKeys {
+			if item.APIKeyHash == "" {
+				item.APIKeyHash = group.Key
+				item.IsUnknown = true
+			}
+			item.APIKeyLabel = item.APIKeyHash
+			item.ID = item.APIKeyHash
+		}
+		if item.LatencyCount > 0 {
+			averageLatency := item.LatencySumMS / item.LatencyCount
+			item.LatencyMS = &averageLatency
+		}
+		sort.Strings(item.AuthLabels)
+		sort.Strings(item.AuthIndices)
+		sort.Strings(item.Channels)
+		sort.Strings(item.SourceLabels)
+		items = append(items, item)
+	}
+	return items
+}
+
+func buildBreakdownModelItems(details []usageBreakdownDetail) []UsageBreakdownModelItem {
+	models := map[string]*UsageBreakdownModelItem{}
+	for _, detail := range details {
+		key := detail.Model + "\x00" + detail.Detail.ResolvedModel
+		item := models[key]
+		if item == nil {
+			item = &UsageBreakdownModelItem{Model: detail.Model, ResolvedModel: detail.Detail.ResolvedModel}
+			models[key] = item
+		}
+		item.TotalRequests += detail.Detail.RequestCount
+		item.SuccessCount += detail.Detail.SuccessCount
+		item.FailureCount += detail.Detail.FailureCount
+		item.InputTokens += detail.Detail.Tokens.InputTokens
+		item.OutputTokens += detail.Detail.Tokens.OutputTokens
+		item.ReasoningTokens += detail.Detail.Tokens.ReasoningTokens
+		item.CachedTokens += maxInt64(detail.Detail.Tokens.CachedTokens, detail.Detail.Tokens.CacheTokens)
+		item.TotalTokens += detail.Detail.Tokens.TotalTokens
+		if detail.TimestampMS > item.LastSeenAtMS {
+			item.LastSeenAtMS = detail.TimestampMS
+		}
+	}
+	items := make([]UsageBreakdownModelItem, 0, len(models))
+	for _, item := range models {
+		items = append(items, *item)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].LastSeenAtMS != items[j].LastSeenAtMS {
+			return items[i].LastSeenAtMS > items[j].LastSeenAtMS
+		}
+		if items[i].Model != items[j].Model {
+			return items[i].Model < items[j].Model
+		}
+		return items[i].ResolvedModel < items[j].ResolvedModel
+	})
+	return items
+}
+
+func buildBreakdownRecentPattern(details []usageBreakdownDetail, limit int) []bool {
+	sorted := append([]usageBreakdownDetail(nil), details...)
+	sortBreakdownDetails(sorted)
+	if len(sorted) > limit {
+		sorted = sorted[:limit]
+	}
+	pattern := make([]bool, 0, len(sorted))
+	for i := len(sorted) - 1; i >= 0; i-- {
+		pattern = append(pattern, !sorted[i].Detail.Failed)
+	}
+	return pattern
+}
+
+func appendUniqueString(values *[]string, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	for _, existing := range *values {
+		if existing == value {
+			return
+		}
+	}
+	*values = append(*values, value)
 }
 
 func accountBreakdownKey(detail usage.Detail) string {
