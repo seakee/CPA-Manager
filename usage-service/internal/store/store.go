@@ -265,13 +265,17 @@ func (s *Store) ensureUsageSearchIndex() error {
 			endpoint,
 			method,
 			path,
-			tokenize='unicode61'
+			tokenize='unicode61',
+			prefix='2 3 4'
 		)`,
 		`create virtual table if not exists api_key_aliases_fts using fts5(
 			api_key_hash unindexed,
 			alias,
-			tokenize='unicode61'
+			tokenize='unicode61',
+			prefix='2 3 4'
 		)`,
+		// usage_events is currently append-only. Add matching FTS update/delete triggers before
+		// introducing retention cleanup or mutation paths for existing usage rows.
 		`create trigger if not exists usage_events_fts_ai after insert on usage_events begin
 			insert into usage_events_fts (
 				event_id, account_snapshot, auth_label_snapshot, auth_file_snapshot,
@@ -1023,15 +1027,15 @@ func buildFTSQuery(search string) string {
 	if len(terms) == 0 {
 		return ""
 	}
-	quoted := make([]string, 0, len(terms))
+	prefixTerms := make([]string, 0, len(terms))
 	for _, term := range terms {
-		term = strings.TrimSpace(term)
+		term = strings.Trim(strings.TrimSpace(term), `"*`)
 		if term == "" {
 			continue
 		}
-		quoted = append(quoted, `"`+strings.ReplaceAll(term, `"`, `""`)+`"`)
+		prefixTerms = append(prefixTerms, `"`+strings.ReplaceAll(term, `"`, `""`)+`"*`)
 	}
-	return strings.Join(quoted, " AND ")
+	return strings.Join(prefixTerms, " AND ")
 }
 
 func (s *Store) UsageSummary(ctx context.Context, filter UsageSummaryFilter) (usage.Payload, error) {

@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
 )
@@ -298,6 +300,32 @@ func TestStoreUsageSearchUsesFTSAndAPIKeyAlias(t *testing.T) {
 	if summary.TotalRequests != 1 || summary.TotalTokens != 20 {
 		t.Fatalf("model search summary = %#v", summary)
 	}
+
+	summary, err = db.UsageSummary(context.Background(), UsageSummaryFilter{
+		Search: "gem",
+	})
+	if err != nil {
+		t.Fatalf("model prefix search summary: %v", err)
+	}
+	if summary.TotalRequests != 1 || summary.TotalTokens != 20 {
+		t.Fatalf("model prefix search summary = %#v", summary)
+	}
+
+	summary, err = db.UsageSummary(context.Background(), UsageSummaryFilter{
+		Search: "Kong",
+	})
+	if err != nil {
+		t.Fatalf("alias prefix search summary: %v", err)
+	}
+	if summary.TotalRequests != 1 || summary.TotalTokens != 10 {
+		t.Fatalf("alias prefix search summary = %#v", summary)
+	}
+}
+
+func TestBuildFTSQueryUsesPrefixTokens(t *testing.T) {
+	if got := buildFTSQuery(`co code "codex"`); got != `"co"* AND "code"* AND "codex"*` {
+		t.Fatalf("fts query = %q", got)
+	}
 }
 
 func TestStoreUsageBreakdownPagePaginatesAccountGroups(t *testing.T) {
@@ -361,6 +389,47 @@ func TestStoreUsageBreakdownPagePaginatesAccountGroups(t *testing.T) {
 	}
 	if details[0].AccountSnapshot != "carol@example.com" {
 		t.Fatalf("account page detail account = %q, want carol", details[0].AccountSnapshot)
+	}
+}
+
+func TestStoreUsageBreakdownPageHandlesLargerAccountDataset(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	events := make([]usage.Event, 0, 120)
+	for i := range 120 {
+		events = append(events, usage.Event{
+			EventHash:       fmt.Sprintf("large-account-page-%03d", i),
+			TimestampMS:     1_778_000_000_000 + int64(i),
+			Timestamp:       time.UnixMilli(1_778_000_000_000 + int64(i)).UTC().Format(time.RFC3339Nano),
+			Model:           "gpt-test",
+			Endpoint:        "POST /v1/chat/completions",
+			AuthIndex:       fmt.Sprintf("auth-%03d", i),
+			AccountSnapshot: fmt.Sprintf("account-%03d@example.com", i),
+			TotalTokens:     int64(i + 1),
+		})
+	}
+	if _, err := db.InsertEvents(context.Background(), events); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	page, err := db.UsageBreakdownPage(context.Background(), UsageBreakdownAccounts, UsageSummaryFilter{}, UsagePageFilter{
+		Page:     5,
+		PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("usage large account page: %v", err)
+	}
+	if page.TotalItems != 120 || page.Page != 5 || page.PageSize != 20 {
+		t.Fatalf("pagination = %#v", page)
+	}
+	if details := collectTestDetails(page.Usage); len(details) != 20 {
+		t.Fatalf("details len = %d, want 20", len(details))
 	}
 }
 

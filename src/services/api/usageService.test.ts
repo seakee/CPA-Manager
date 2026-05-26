@@ -72,11 +72,11 @@ describe('usageServiceApi usage pages', () => {
       .mockRejectedValueOnce({ response: { status: 404, data: { error: 'not found' } } })
       .mockResolvedValueOnce({ data: { total_requests: 2, apis: {} } });
 
-    const payload = await usageServiceApi.getUsage(
-      'https://manage.example',
-      'management-key',
-      { startMs: 1000, endMs: 2000, search: 'codex' }
-    );
+    const payload = await usageServiceApi.getUsage('https://manage.example', 'management-key', {
+      startMs: 1000,
+      endMs: 2000,
+      search: 'codex',
+    });
 
     expect(payload.total_requests).toBe(2);
     expect(mockedAxios.get).toHaveBeenNthCalledWith(
@@ -91,6 +91,34 @@ describe('usageServiceApi usage pages', () => {
         headers: { Authorization: 'Bearer management-key' },
       })
     );
+  });
+
+  it('does not fall back to legacy usage when summary fails for a non-compatibility error', async () => {
+    mockedAxios.isAxiosError.mockReturnValue(true);
+    mockedAxios.get.mockRejectedValueOnce({
+      response: { status: 500, data: { error: 'database unavailable' } },
+    });
+
+    await expect(
+      usageServiceApi.getUsage('https://manage.example', 'management-key')
+    ).rejects.toMatchObject({
+      status: 500,
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fall back to legacy usage when summary fails before receiving a response', async () => {
+    mockedAxios.isAxiosError.mockReturnValue(true);
+    mockedAxios.get.mockRejectedValueOnce({ code: 'ECONNABORTED', message: 'timeout' });
+
+    await expect(
+      usageServiceApi.getUsage('https://manage.example', 'management-key')
+    ).rejects.toMatchObject({
+      code: 'ECONNABORTED',
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(1);
   });
 
   it('preserves 404 status from missing paginated APIs so callers can use legacy fallback', async () => {

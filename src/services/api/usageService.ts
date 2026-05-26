@@ -318,6 +318,12 @@ const appendUsageQueryParams = (params: URLSearchParams, query?: UsageQuery) => 
   if (query?.searchApiKeyHash) params.set('search_api_key_hash', query.searchApiKeyHash);
 };
 
+const isMissingUsageSummaryEndpoint = (error: unknown) => {
+  if (!axios.isAxiosError(error)) return false;
+  const status = error.response?.status;
+  return status === 404 || status === 405;
+};
+
 export const usageServiceApi = {
   getInfo: async (base: string): Promise<UsageServiceInfo> => {
     return withUsageServiceError(async () => {
@@ -397,8 +403,7 @@ export const usageServiceApi = {
         });
         return response.data;
       } catch (error) {
-        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-        if (status && status !== 404 && status !== 405) {
+        if (!isMissingUsageSummaryEndpoint(error)) {
           throw error;
         }
       }
