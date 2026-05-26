@@ -905,6 +905,10 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 			s.handleUsageBreakdownPage(w, r, store.UsageBreakdownRealtime)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			s.handleUsageBreakdownPage(w, r, store.UsageBreakdownModels)
+			return
+		}
 		events, err := s.store.RecentEvents(r.Context(), s.cfg.QueryLimit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)

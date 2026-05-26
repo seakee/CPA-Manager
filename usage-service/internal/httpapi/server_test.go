@@ -240,21 +240,13 @@ func TestUsageSummaryReturnsAggregatesWithoutDetails(t *testing.T) {
 	}
 
 	var response struct {
-		TotalRequests int64 `json:"total_requests"`
-		SuccessCount  int64 `json:"success_count"`
-		FailureCount  int64 `json:"failure_count"`
-		TotalTokens   int64 `json:"total_tokens"`
-		APIs          map[string]struct {
-			Models map[string]struct {
-				Details []struct {
-					RequestCount int64 `json:"request_count"`
-					SuccessCount int64 `json:"success_count"`
-					Tokens       struct {
-						TotalTokens int64 `json:"total_tokens"`
-					} `json:"tokens"`
-				} `json:"details"`
-			} `json:"models"`
-		} `json:"apis"`
+		TotalRequests int64          `json:"total_requests"`
+		SuccessCount  int64          `json:"success_count"`
+		FailureCount  int64          `json:"failure_count"`
+		TotalTokens   int64          `json:"total_tokens"`
+		LatencySumMS  int64          `json:"latency_sum_ms"`
+		LatencyCount  int64          `json:"latency_count"`
+		APIs          map[string]any `json:"apis"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode summary: %v", err)
@@ -262,9 +254,11 @@ func TestUsageSummaryReturnsAggregatesWithoutDetails(t *testing.T) {
 	if response.TotalRequests != 1 || response.SuccessCount != 1 || response.FailureCount != 0 || response.TotalTokens != 30 {
 		t.Fatalf("summary = %#v", response)
 	}
-	model := response.APIs["POST /v1/chat/completions"].Models["gpt-4o"]
-	if len(model.Details) != 1 || model.Details[0].RequestCount != 1 || model.Details[0].SuccessCount != 1 || model.Details[0].Tokens.TotalTokens != 30 {
-		t.Fatalf("model summary details = %#v", model.Details)
+	if response.LatencySumMS != 0 || response.LatencyCount != 0 {
+		t.Fatalf("summary latency = sum:%d count:%d", response.LatencySumMS, response.LatencyCount)
+	}
+	if len(response.APIs) != 0 {
+		t.Fatalf("summary APIs len = %d, want no detail aggregates", len(response.APIs))
 	}
 }
 
@@ -310,6 +304,7 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 		"/v0/management/usage/accounts?page=1&page_size=1",
 		"/v0/management/usage/api-keys?page=1&page_size=1",
 		"/v0/management/usage/realtime?page=1&page_size=1",
+		"/v0/management/usage/models?page=1&page_size=1",
 	} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -329,7 +324,11 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 				t.Fatalf("decode response: %v", err)
 			}
-			if response.Page != 1 || response.PageSize != 1 || response.TotalItems != 2 {
+			wantTotalItems := int64(2)
+			if strings.Contains(path, "/models") {
+				wantTotalItems = 1
+			}
+			if response.Page != 1 || response.PageSize != 1 || response.TotalItems != wantTotalItems {
 				t.Fatalf("pagination response = %#v", response)
 			}
 			if len(response.Usage) == 0 || string(response.Usage) == "null" {

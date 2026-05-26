@@ -119,6 +119,11 @@ const readString = (value: unknown) => {
   return text;
 };
 
+const readFiniteNumber = (value: unknown) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+};
+
 const extractArrayPayload = (payload: unknown, key: string): unknown[] => {
   if (Array.isArray(payload)) return payload;
   if (!isRecord(payload)) return [];
@@ -526,6 +531,7 @@ export interface UseMonitoringDataParams {
     accounts?: { usage?: unknown } | null;
     apiKeys?: { usage?: unknown } | null;
     realtime?: { usage?: unknown } | null;
+    models?: { usage?: unknown } | null;
   } | null;
   config: Config | null | undefined;
   modelPrices: Record<string, ModelPrice>;
@@ -832,6 +838,52 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
       approxTasks > 0 ? Math.max(approxTasks - approxTaskFailures, 0) / approxTasks : 1,
     zeroTokenCalls: zeroTokenRows.reduce((sum, row) => sum + row.requestCount, 0),
     zeroTokenModels: Array.from(new Set(zeroTokenRows.map((row) => row.model))).sort(),
+  };
+};
+
+const buildAggregateMonitoringSummary = (
+  usage: unknown,
+  modelRows: MonitoringEventRow[] | null,
+  fallbackRows: MonitoringEventRow[]
+): MonitoringSummary => {
+  const rowsSummary = buildMonitoringSummary(modelRows ?? fallbackRows);
+  if (!modelRows || !isRecord(usage)) {
+    return rowsSummary;
+  }
+
+  const tokens = isRecord(usage.tokens) ? usage.tokens : {};
+  const totalCalls = readFiniteNumber(usage.total_requests);
+  const successCalls = readFiniteNumber(usage.success_count);
+  const failureCalls = readFiniteNumber(usage.failure_count);
+  const inputTokens = readFiniteNumber(tokens.input_tokens);
+  const outputTokens = readFiniteNumber(tokens.output_tokens);
+  const reasoningTokens = readFiniteNumber(tokens.reasoning_tokens);
+  const cachedTokens = Math.max(
+    readFiniteNumber(tokens.cached_tokens),
+    readFiniteNumber(tokens.cache_tokens)
+  );
+  const totalTokens = readFiniteNumber(usage.total_tokens ?? tokens.total_tokens);
+  const latencyCount = readFiniteNumber(usage.latency_count);
+  const latencySum = readFiniteNumber(usage.latency_sum_ms);
+  const averageLatencyMs =
+    latencyCount > 0
+      ? latencySum / latencyCount
+      : Number.isFinite(Number(usage.latency_ms))
+        ? Number(usage.latency_ms)
+        : null;
+
+  return {
+    ...rowsSummary,
+    totalCalls,
+    successCalls,
+    failureCalls,
+    successRate: totalCalls > 0 ? successCalls / totalCalls : 1,
+    inputTokens,
+    outputTokens,
+    reasoningTokens,
+    cachedTokens,
+    totalTokens,
+    averageLatencyMs,
   };
 };
 
@@ -2027,6 +2079,12 @@ export function useMonitoringData({
     usagePages?.realtime?.usage,
   ]);
 
+  const modelAggregateRows = useMemo(() => {
+    const pageUsage = usagePages?.models?.usage;
+    if (!pageUsage) return null;
+    return buildRowsForUsage(pageUsage).filter(shouldIncludeInStats);
+  }, [buildRowsForUsage, usagePages?.models?.usage]);
+
   const filteredRows = useMemo(
     () =>
       buildRangeFilteredRows(allRows, timeRange, customTimeRange, searchQuery, searchApiKeyHash),
@@ -2034,7 +2092,10 @@ export function useMonitoringData({
   );
   const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
 
-  const summary = useMemo(() => buildMonitoringSummary(statsRows), [statsRows]);
+  const summary = useMemo(
+    () => buildAggregateMonitoringSummary(usage, modelAggregateRows, statsRows),
+    [modelAggregateRows, statsRows, usage]
+  );
   const timelineData = useMemo(
     () => buildTimeline(statsRows, timeRange, customTimeRange),
     [customTimeRange, statsRows, timeRange]

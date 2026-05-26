@@ -35,12 +35,14 @@ export type UsagePageQueries = {
   accounts?: UsagePageQuery;
   apiKeys?: UsagePageQuery;
   realtime?: UsagePageQuery;
+  models?: UsagePageQuery;
 };
 
 export type UsagePages = {
   accounts?: UsagePageResponse;
   apiKeys?: UsagePageResponse;
   realtime?: UsagePageResponse;
+  models?: UsagePageResponse;
 };
 
 export interface UseUsageDataReturn {
@@ -66,6 +68,30 @@ const isUsagePageFallbackError = (error: unknown) => {
   const status = (error as { status?: number }).status;
   const code = (error as { code?: string }).code;
   return status === 404 || status === 405 || code === 'method_not_allowed';
+};
+
+const mergeUsagePayloads = (payloads: UsagePayload[]): UsagePayload => {
+  const merged: UsagePayload = { apis: {} };
+  payloads.forEach((payload) => {
+    merged.total_requests = Number(merged.total_requests || 0) + Number(payload.total_requests || 0);
+    merged.success_count = Number(merged.success_count || 0) + Number(payload.success_count || 0);
+    merged.failure_count = Number(merged.failure_count || 0) + Number(payload.failure_count || 0);
+    merged.total_tokens = Number(merged.total_tokens || 0) + Number(payload.total_tokens || 0);
+    if (payload.apis && typeof payload.apis === 'object') {
+      Object.entries(payload.apis).forEach(([endpoint, api]) => {
+        if (!api || typeof api !== 'object' || Array.isArray(api)) return;
+        const sourceModels = (api as { models?: unknown }).models;
+        if (!sourceModels || typeof sourceModels !== 'object' || Array.isArray(sourceModels)) return;
+        const mergedApis = merged.apis as Record<string, { models: Record<string, unknown> }>;
+        const target = mergedApis[endpoint] ?? { models: {} };
+        Object.entries(sourceModels).forEach(([model, aggregate]) => {
+          target.models[model] = aggregate;
+        });
+        mergedApis[endpoint] = target;
+      });
+    }
+  });
+  return merged;
 };
 
 export function useUsageData(
@@ -198,7 +224,37 @@ export function useUsageData(
       if (!usagePageQueries) return null;
       const activeUsageQuery = queryOverride ?? usageQuery;
       try {
-        const [accounts, apiKeys, realtime] = await Promise.all([
+        const loadModelPages = async () => {
+          if (!usagePageQueries.models) return undefined;
+          const first = await usageServiceApi.getUsagePage(
+            serviceBase,
+            managementKey,
+            'models',
+            activeUsageQuery,
+            usagePageQueries.models
+          );
+          const totalItems = Math.max(0, Math.trunc(Number(first.total_items) || 0));
+          const pageSize = Math.max(1, Math.trunc(Number(first.page_size) || 1));
+          const pageCount = Math.ceil(totalItems / pageSize);
+          if (pageCount <= 1) return first;
+
+          const rest = await Promise.all(
+            Array.from({ length: pageCount - 1 }, (_, index) =>
+              usageServiceApi.getUsagePage(serviceBase, managementKey, 'models', activeUsageQuery, {
+                ...usagePageQueries.models,
+                page: index + 2,
+                pageSize,
+              })
+            )
+          );
+          return {
+            ...first,
+            page: 1,
+            usage: mergeUsagePayloads([first, ...rest].map((page) => page.usage)),
+          };
+        };
+
+        const [accounts, apiKeys, realtime, models] = await Promise.all([
           usagePageQueries.accounts
             ? usageServiceApi.getUsagePage(
                 serviceBase,
@@ -226,8 +282,9 @@ export function useUsageData(
                 usagePageQueries.realtime
               )
             : Promise.resolve(undefined),
+          loadModelPages(),
         ]);
-        return { accounts, apiKeys, realtime };
+        return { accounts, apiKeys, realtime, models };
       } catch (error) {
         if (isUsagePageFallbackError(error)) {
           return null;
@@ -245,6 +302,8 @@ export function useUsageData(
       usagePageQueries?.apiKeys?.pageSize,
       usagePageQueries?.realtime?.page,
       usagePageQueries?.realtime?.pageSize,
+      usagePageQueries?.models?.page,
+      usagePageQueries?.models?.pageSize,
       usageQuery,
     ]
   );

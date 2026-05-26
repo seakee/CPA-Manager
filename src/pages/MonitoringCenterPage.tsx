@@ -44,7 +44,6 @@ import {
 import {
   buildAccountRows,
   buildApiKeyRows,
-  buildMonitoringSummary,
   buildRealtimeMonitorRows,
   getRangeBounds,
   type MonitoringAccountModelSpendRow,
@@ -2020,6 +2019,10 @@ export function MonitoringCenterPage() {
         page: realtimePage,
         pageSize: realtimePageSize,
       },
+      models: {
+        page: 1,
+        pageSize: 500,
+      },
     }),
     [
       accountPage,
@@ -2060,6 +2063,7 @@ export function MonitoringCenterPage() {
     apiKeyPageRows,
     realtimePageRows,
     refreshMeta,
+    summary: monitoringSummary,
   } = useMonitoringData({
     usage,
     usagePages,
@@ -2325,7 +2329,7 @@ export function MonitoringCenterPage() {
     [accountStatusBounds, i18n.language, t]
   );
 
-  const scopedSummary = useMemo(() => buildMonitoringSummary(scopedStatsRows), [scopedStatsRows]);
+  const scopedSummary = monitoringSummary;
   const accountRows = useMemo(() => buildAccountRows(scopedRows), [scopedRows]);
   const apiKeyRows = useMemo(() => buildApiKeyRows(scopedRows), [scopedRows]);
   const accountStatusDataByRowId = useMemo(

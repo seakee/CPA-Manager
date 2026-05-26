@@ -90,6 +90,9 @@ type Payload struct {
 	SuccessCount  int64                    `json:"success_count"`
 	FailureCount  int64                    `json:"failure_count"`
 	TotalTokens   int64                    `json:"total_tokens"`
+	LatencySumMS  int64                    `json:"latency_sum_ms,omitempty"`
+	LatencyCount  int64                    `json:"latency_count,omitempty"`
+	LatencyMS     *int64                   `json:"latency_ms,omitempty"`
 	Tokens        Tokens                   `json:"tokens,omitempty"`
 	APIs          map[string]*APIAggregate `json:"apis"`
 }
@@ -199,6 +202,16 @@ func BuildPayload(events []Event) Payload {
 			payload.SuccessCount++
 		}
 		payload.TotalTokens += event.TotalTokens
+		payload.Tokens.InputTokens += event.InputTokens
+		payload.Tokens.OutputTokens += event.OutputTokens
+		payload.Tokens.ReasoningTokens += event.ReasoningTokens
+		payload.Tokens.CachedTokens += event.CachedTokens
+		payload.Tokens.CacheTokens += event.CacheTokens
+		payload.Tokens.TotalTokens += event.TotalTokens
+		if event.LatencyMS != nil {
+			payload.LatencySumMS += *event.LatencyMS
+			payload.LatencyCount++
+		}
 
 		endpoint := event.Endpoint
 		if endpoint == "" {
@@ -241,6 +254,10 @@ func BuildPayload(events []Event) Payload {
 				TotalTokens:     event.TotalTokens,
 			},
 		})
+	}
+	if payload.LatencyCount > 0 {
+		averageLatency := payload.LatencySumMS / payload.LatencyCount
+		payload.LatencyMS = &averageLatency
 	}
 	return payload
 }

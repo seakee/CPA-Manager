@@ -183,20 +183,14 @@ func TestStoreUsageSummaryAggregatesEventsWithoutDetails(t *testing.T) {
 	if summary.TotalRequests != 2 || summary.SuccessCount != 1 || summary.FailureCount != 1 || summary.TotalTokens != 42 {
 		t.Fatalf("summary totals = %#v", summary)
 	}
-	model := summary.APIs["POST /v1/chat/completions"].Models["gpt-test"]
-	if len(model.Details) != 2 {
-		t.Fatalf("len(model.Details) = %d, want success and failure buckets", len(model.Details))
+	if summary.Tokens.InputTokens != 15 || summary.Tokens.OutputTokens != 20 || summary.Tokens.ReasoningTokens != 7 || summary.Tokens.TotalTokens != 42 {
+		t.Fatalf("summary token totals = %#v", summary.Tokens)
 	}
-	var requests, successes, failures, totalTokens, latencyCount int64
-	for _, detail := range model.Details {
-		requests += detail.RequestCount
-		successes += detail.SuccessCount
-		failures += detail.FailureCount
-		totalTokens += detail.Tokens.TotalTokens
-		latencyCount += detail.LatencyCount
+	if summary.LatencySumMS != 123 || summary.LatencyCount != 1 || summary.LatencyMS == nil || *summary.LatencyMS != 123 {
+		t.Fatalf("summary latency = sum:%d count:%d avg:%v", summary.LatencySumMS, summary.LatencyCount, summary.LatencyMS)
 	}
-	if requests != 2 || successes != 1 || failures != 1 || totalTokens != 42 || latencyCount != 1 {
-		t.Fatalf("summary detail totals = requests:%d successes:%d failures:%d tokens:%d latencyCount:%d", requests, successes, failures, totalTokens, latencyCount)
+	if len(summary.APIs) != 0 {
+		t.Fatalf("summary APIs len = %d, want no detail aggregates", len(summary.APIs))
 	}
 
 	startMS := int64(1_778_000_004_000)
@@ -374,6 +368,60 @@ func TestStoreUsageBreakdownPagePaginatesRealtimeRows(t *testing.T) {
 	details := collectTestDetails(page.Usage)
 	if len(details) != 1 || details[0].Tokens.TotalTokens != 10 {
 		t.Fatalf("realtime page details = %#v, want oldest row", details)
+	}
+}
+
+func TestStoreUsageBreakdownPagePaginatesModelGroupsWithFilters(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	_, err = db.InsertEvents(context.Background(), []usage.Event{
+		{
+			EventHash:            "model-page-codex",
+			TimestampMS:          1_778_000_001_000,
+			Timestamp:            "2026-05-06T00:00:01Z",
+			Provider:             "codex",
+			Model:                "gpt-test",
+			Endpoint:             "POST /v1/chat/completions",
+			ResolvedModel:        "gpt-test-resolved",
+			InputTokens:          10,
+			OutputTokens:         20,
+			TotalTokens:          30,
+			AuthProviderSnapshot: "codex",
+		},
+		{
+			EventHash:            "model-page-other",
+			TimestampMS:          1_778_000_002_000,
+			Timestamp:            "2026-05-06T00:00:02Z",
+			Provider:             "gemini",
+			Model:                "gemini-test",
+			Endpoint:             "POST /v1/chat/completions",
+			TotalTokens:          40,
+			AuthProviderSnapshot: "gemini",
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	page, err := db.UsageBreakdownPage(context.Background(), UsageBreakdownModels, UsageSummaryFilter{Provider: "codex"}, UsagePageFilter{
+		Page:     1,
+		PageSize: 10,
+	})
+	if err != nil {
+		t.Fatalf("usage model page: %v", err)
+	}
+	if page.TotalItems != 1 || page.Usage.TotalRequests != 1 || page.Usage.TotalTokens != 30 {
+		t.Fatalf("model page = %#v", page)
+	}
+	details := collectTestDetails(page.Usage)
+	if len(details) != 1 || details[0].ResolvedModel != "gpt-test-resolved" || details[0].Tokens.TotalTokens != 30 {
+		t.Fatalf("model page details = %#v", details)
 	}
 }
 

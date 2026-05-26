@@ -44,7 +44,7 @@ export interface UsageQuery {
   searchApiKeyHash?: string;
 }
 
-export type UsagePageKind = 'accounts' | 'api-keys' | 'realtime';
+export type UsagePageKind = 'accounts' | 'api-keys' | 'realtime' | 'models';
 
 export interface UsagePageQuery {
   page: number;

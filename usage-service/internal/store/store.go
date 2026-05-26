@@ -775,6 +775,7 @@ const (
 	UsageBreakdownAccounts UsageBreakdownKind = "accounts"
 	UsageBreakdownAPIKeys  UsageBreakdownKind = "api-keys"
 	UsageBreakdownRealtime UsageBreakdownKind = "realtime"
+	UsageBreakdownModels   UsageBreakdownKind = "models"
 )
 
 type UsagePageFilter struct {
@@ -867,6 +868,10 @@ func (filter UsageSummaryFilter) whereClause() (string, []any) {
 }
 
 func (s *Store) UsageSummary(ctx context.Context, filter UsageSummaryFilter) (usage.Payload, error) {
+	return s.usageSummary(ctx, filter, false)
+}
+
+func (s *Store) usageSummary(ctx context.Context, filter UsageSummaryFilter, includeDetails bool) (usage.Payload, error) {
 	summary := usage.Payload{APIs: map[string]*usage.APIAggregate{}}
 	whereClause, args := filter.whereClause()
 	err := s.db.QueryRowContext(ctx, `select
@@ -878,7 +883,9 @@ func (s *Store) UsageSummary(ctx context.Context, filter UsageSummaryFilter) (us
 		coalesce(sum(reasoning_tokens), 0),
 		coalesce(sum(cached_tokens), 0),
 		coalesce(sum(cache_tokens), 0),
-		coalesce(sum(total_tokens), 0)
+		coalesce(sum(total_tokens), 0),
+		coalesce(sum(latency_ms), 0),
+		count(latency_ms)
 		from usage_events`+whereClause, args...).Scan(
 		&summary.TotalRequests,
 		&summary.SuccessCount,
@@ -889,11 +896,20 @@ func (s *Store) UsageSummary(ctx context.Context, filter UsageSummaryFilter) (us
 		&summary.Tokens.CachedTokens,
 		&summary.Tokens.CacheTokens,
 		&summary.TotalTokens,
+		&summary.LatencySumMS,
+		&summary.LatencyCount,
 	)
 	if err != nil {
 		return usage.Payload{}, err
 	}
 	summary.Tokens.TotalTokens = summary.TotalTokens
+	if summary.LatencyCount > 0 {
+		averageLatency := summary.LatencySumMS / summary.LatencyCount
+		summary.LatencyMS = &averageLatency
+	}
+	if !includeDetails {
+		return summary, nil
+	}
 
 	rows, err := s.db.QueryContext(ctx, `select
 		coalesce(nullif(endpoint, ''), '-'),
@@ -1006,7 +1022,7 @@ func (s *Store) UsageSummary(ctx context.Context, filter UsageSummaryFilter) (us
 
 func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind, filter UsageSummaryFilter, pageFilter UsagePageFilter) (UsagePage, error) {
 	page, pageSize := normalizeUsagePageFilter(pageFilter)
-	summary, err := s.UsageSummary(ctx, filter)
+	summary, err := s.usageSummary(ctx, filter, true)
 	if err != nil {
 		return UsagePage{}, err
 	}
@@ -1019,9 +1035,102 @@ func (s *Store) UsageBreakdownPage(ctx context.Context, kind UsageBreakdownKind,
 		return buildGroupedUsagePage(details, page, pageSize, pageFilter, apiKeyBreakdownKey), nil
 	case UsageBreakdownRealtime:
 		return s.usageRealtimePage(ctx, filter, page, pageSize)
+	case UsageBreakdownModels:
+		return s.usageModelPage(ctx, filter, page, pageSize)
 	default:
 		return UsagePage{}, fmt.Errorf("unknown usage breakdown kind %q", kind)
 	}
+}
+
+func (s *Store) usageModelPage(ctx context.Context, filter UsageSummaryFilter, page int, pageSize int) (UsagePage, error) {
+	whereClause, args := filter.whereClause()
+	var totalItems int64
+	if err := s.db.QueryRowContext(ctx, `select count(*) from (
+		select 1 from usage_events`+whereClause+`
+		group by coalesce(nullif(endpoint, ''), '-'), coalesce(nullif(model, ''), '-'),
+			coalesce(resolved_model, ''), failed
+	)`, args...).Scan(&totalItems); err != nil {
+		return UsagePage{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `select
+		coalesce(nullif(endpoint, ''), '-'),
+		coalesce(nullif(model, ''), '-'),
+		coalesce(resolved_model, ''),
+		failed,
+		max(timestamp_ms),
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(input_tokens), 0),
+		coalesce(sum(output_tokens), 0),
+		coalesce(sum(reasoning_tokens), 0),
+		coalesce(sum(cached_tokens), 0),
+		coalesce(sum(cache_tokens), 0),
+		coalesce(sum(total_tokens), 0),
+		coalesce(sum(latency_ms), 0),
+		count(latency_ms)
+		from usage_events`+whereClause+`
+		group by coalesce(nullif(endpoint, ''), '-'), coalesce(nullif(model, ''), '-'),
+			coalesce(resolved_model, ''), failed
+		order by max(timestamp_ms) desc
+		limit ? offset ?`, append(args, pageSize, (page-1)*pageSize)...)
+	if err != nil {
+		return UsagePage{}, err
+	}
+	defer rows.Close()
+
+	details := make([]usageBreakdownDetail, 0)
+	for rows.Next() {
+		var endpoint, model, resolvedModel string
+		var failed int
+		var latestTimestampMS int64
+		var latencySumMS, latencyCount int64
+		detail := usage.Detail{}
+		if err := rows.Scan(
+			&endpoint,
+			&model,
+			&resolvedModel,
+			&failed,
+			&latestTimestampMS,
+			&detail.RequestCount,
+			&detail.SuccessCount,
+			&detail.FailureCount,
+			&detail.Tokens.InputTokens,
+			&detail.Tokens.OutputTokens,
+			&detail.Tokens.ReasoningTokens,
+			&detail.Tokens.CachedTokens,
+			&detail.Tokens.CacheTokens,
+			&detail.Tokens.TotalTokens,
+			&latencySumMS,
+			&latencyCount,
+		); err != nil {
+			return UsagePage{}, err
+		}
+		detail.Timestamp = time.UnixMilli(latestTimestampMS).UTC().Format(time.RFC3339Nano)
+		detail.ResolvedModel = resolvedModel
+		detail.Failed = failed != 0
+		detail.LatencySumMS = latencySumMS
+		detail.LatencyCount = latencyCount
+		if latencyCount > 0 {
+			averageLatency := latencySumMS / latencyCount
+			detail.LatencyMS = &averageLatency
+		}
+		details = append(details, usageBreakdownDetail{
+			Endpoint:    endpoint,
+			Model:       model,
+			TimestampMS: latestTimestampMS,
+			Detail:      detail,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return UsagePage{}, err
+	}
+	return UsagePage{
+		Page:       page,
+		PageSize:   pageSize,
+		TotalItems: totalItems,
+		Usage:      payloadFromBreakdownDetails(details),
+	}, nil
 }
 
 func (s *Store) usageRealtimePage(ctx context.Context, filter UsageSummaryFilter, page int, pageSize int) (UsagePage, error) {
@@ -1281,6 +1390,8 @@ func payloadFromBreakdownDetails(details []usageBreakdownDetail) usage.Payload {
 		payload.Tokens.CacheTokens += detail.Tokens.CacheTokens
 		payload.Tokens.TotalTokens += detail.Tokens.TotalTokens
 		payload.TotalTokens += detail.Tokens.TotalTokens
+		payload.LatencySumMS += detail.LatencySumMS
+		payload.LatencyCount += detail.LatencyCount
 
 		apiSummary := payload.APIs[item.Endpoint]
 		if apiSummary == nil {
@@ -1293,6 +1404,10 @@ func payloadFromBreakdownDetails(details []usageBreakdownDetail) usage.Payload {
 			apiSummary.Models[item.Model] = modelSummary
 		}
 		modelSummary.Details = append(modelSummary.Details, detail)
+	}
+	if payload.LatencyCount > 0 {
+		averageLatency := payload.LatencySumMS / payload.LatencyCount
+		payload.LatencyMS = &averageLatency
 	}
 	return payload
 }
