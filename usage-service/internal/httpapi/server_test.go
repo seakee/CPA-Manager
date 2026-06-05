@@ -345,6 +345,33 @@ func TestUsageBreakdownPageEndpointsReturnPagination(t *testing.T) {
 	}
 }
 
+func TestUsageEndpointsUseExactPathsWithTrailingSlashNormalization(t *testing.T) {
+	handler := newTestHandler(t, "http://example.test", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/usage/summary/", nil)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("summary trailing slash status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	for _, path := range []string{
+		"/v0/management/usage/not-summary/summary",
+		"/v0/management/usage/accounts-extra",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer management-key")
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestUsageBreakdownPageRejectsUnsafePageFilters(t *testing.T) {
 	handler := newTestHandler(t, "http://example.test", true)
 	for _, path := range []string{
